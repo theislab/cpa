@@ -13,7 +13,7 @@ from ._task import CPATrainingPlan
 from ._data import ManualDataSplitter
 
 
-class CPA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
+class CPA(BaseModelClass):
     def __init__(
         self,
         adata: AnnData,
@@ -42,11 +42,13 @@ class CPA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         super().__init__(adata)
         self.n_genes = self.summary_stats["n_vars"]
         self.n_drugs = adata.obsm[_CE_CONSTANTS.PERTURBATIONS].shape[-1]
+
+        self.covars_to_ncovars = covars_to_ncovars
         
         self.module = CPAModule(
             n_genes=self.n_genes,
             n_drugs=self.n_drugs,
-            covars_to_ncovars=covars_to_ncovars,
+            covars_to_ncovars=self.covars_to_ncovars,
             n_latent=n_latent,
             loss_ae=loss_ae,
             doser_type=doser_type,
@@ -101,7 +103,7 @@ class CPA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 batch_size=batch_size,
                 use_gpu=use_gpu,
             )
-        training_plan = CPATrainingPlan(self.module, **plan_kwargs)
+        self.training_plan = CPATrainingPlan(self.module, self.covars_to_ncovars, **plan_kwargs)
 
         es = "early_stopping"
         trainer_kwargs[es] = (
@@ -109,13 +111,40 @@ class CPA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         )
         runner = TrainRunner(
             self,
-            training_plan=training_plan,
+            training_plan=self.training_plan,
             data_splitter=data_splitter,
             max_epochs=max_epochs,
             use_gpu=use_gpu,
+            early_stopping_monitor="reconstruction_loss_validation",
             **trainer_kwargs,
         )
         return runner()
+
+
+    @torch.no_grad()
+    def get_drug_embeddings(
+        self, 
+        adata: Optional[AnnData] = None,
+        indices: Optional[Sequence[int]] = None,
+        batch_size: Optional[int] = None
+    ) -> np.array:
+        # if self.is_trained_ is False:
+        #     raise RuntimeError("Please train the model first.")
+
+        # adata = self._validate_anndata(adata)
+        # if indices is None:
+        #     indices = np.arange(adata.n_obs)
+        # scdl = self._make_data_loader(
+        #     adata=adata, indices=indices, batch_size=batch_size, shuffle=False
+        # )
+        # latent = []
+        # for tensors in scdl:
+        #     inference_inputs = self.module._get_inference_input(tensors)
+        #     outputs = self.module.inference(**inference_inputs)
+        #     z = outputs["latent_basal"]
+        #     latent += [z.cpu()]
+        # return torch.cat(latent).numpy()
+        pass
 
     @torch.no_grad()
     def get_latent_representation(
@@ -149,7 +178,7 @@ class CPA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         for tensors in scdl:
             inference_inputs = self.module._get_inference_input(tensors)
             outputs = self.module.inference(**inference_inputs)
-            z = outputs["z"]
+            z = outputs["latent_basal"]
             latent += [z.cpu()]
         return torch.cat(latent).numpy()
 
