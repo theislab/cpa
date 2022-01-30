@@ -154,7 +154,7 @@ class CPATrainingPlan(TrainingPlan):
         optimizer_autoencoder = torch.optim.Adam(
             list(self.module.encoder.parameters()) +
             list(self.module.decoder.parameters()) +
-            list(self.module.drug_network.parameters()) +
+            list(self.module.drug_network.drug_embedding.parameters()) +
             list(self.module.covars_embedding.parameters()),
             lr=self.autoencoder_lr,
             weight_decay=self.autoencoder_wd)
@@ -165,10 +165,10 @@ class CPATrainingPlan(TrainingPlan):
             lr=self.adversary_lr,
             weight_decay=self.adversary_wd)
 
-        # optimizer_dosers = torch.optim.Adam(
-        #     self.module.drug_network.dosers.parameters(),
-        #     lr=self.hyper_params["dosers_lr"],
-        #     weight_decay=self.hyper_params["dosers_wd"])
+        optimizer_dosers = torch.optim.Adam(
+            self.module.drug_network.dosers.parameters(),
+            lr=self.hyper_params["dosers_lr"],
+            weight_decay=self.hyper_params["dosers_wd"])
 
         # params1 = filter(lambda p: p.requires_grad, self.module.parameters())
         # optimizer1 = torch.optim.Adam(
@@ -187,11 +187,12 @@ class CPATrainingPlan(TrainingPlan):
         # )
         # optims = [optimizer1, optimizer2]
         
-        optimizers = [optimizer_autoencoder, optimizer_adversaries]
+        optimizers = [optimizer_autoencoder, optimizer_adversaries, optimizer_dosers]
         if self.step_size_lr is not None:
-            autoencoder_scheduler = StepLR(optimizer_autoencoder, step_size=self.step_size_lr)
-            adversaries_scheduler = StepLR(optimizer_adversaries, step_size=self.step_size_lr)
-            schedulers = [autoencoder_scheduler, adversaries_scheduler]
+            scheduler_autoencoder = StepLR(optimizer_autoencoder, step_size=self.step_size_lr)
+            scheduler_adversaries = StepLR(optimizer_adversaries, step_size=self.step_size_lr)
+            scheduler_dosers = StepLR(optimizer_dosers, step_size=self.step_size_lr)
+            schedulers = [scheduler_autoencoder, scheduler_autoencoder]
             return optimizers, schedulers
         else:
             return optimizers
