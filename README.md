@@ -24,14 +24,14 @@ Here are the most straightforward differences existing between the two implement
 
 ## To-Do list
 
-- [] Check `FCLayers` implementation vs. CPA's MLP class
+- [ ] Check `FCLayers` implementation vs. CPA's MLP class
 - [x] Add another optimizer for dosers network
-- [] Check decoder's output (mean and variance) vs. Normal Distribution
-- [] Check Why the scVI's wrapper version of CPA is much more time expensive and memory consuming.
+- [ ] Check decoder's output (mean and variance) vs. Normal Distribution
+- [ ] Check Why the scVI's wrapper version of CPA is much more time expensive and memory consuming.
 - [x] Pre-process dataset and add drug-dose matrix in `obsm` in scVI's wrapper
 - [x] Implement MLP for dosers
-- [] Check NB distribution
-- [] `log(1 + exp(variance)) + epsilon` is not implemented in Facebook implementation of CPA
+- [ ] Check NB distribution
+- [ ] `log(1 + exp(variance)) + epsilon` is not implemented in Facebook implementation of CPA
     - Why this will not result in negative input for `variance.log()` in `GaussLoss`?
 
 
