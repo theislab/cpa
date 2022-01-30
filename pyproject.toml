@@ -5,7 +5,7 @@ profile = "black"
 skip_glob = ["docs/*", "mypackage/__init__.py"]
 
 [tool.poetry]
-authors = ["Adam Gayoso <adamgayoso@berkeley.edu>", "Galen Xing <gx2113@columbia.edu>", "Romain Lopez <romain_lopez@gmail.com>"]
+authors = ["Mohsen Naghipourfar <naghipourfar@berkeley.edu>", "Mohammad Lotfollahi <mohammad.lotfollahi@helmholtz-muenchen.de>"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
@@ -17,16 +17,16 @@ classifiers = [
   "Operating System :: POSIX :: Linux",
   "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
-description = "Skeleton respository for generating novel scvi-tools models."
-documentation = "https://scvi-tools.org"
-homepage = "https://github.com/YosefLab/scvi-tools-skeleton"
+description = "Casual Compositional Perturbation Autoencoder (CCPA)"
+documentation = ""
+homepage = "https://github.com/M0hammadL/casual_cpa/"
 license = "BSD-3-Clause"
-name = "scvi-tools-skeleton"
+name = "cpa"
 packages = [
-  {include = "mypackage"},
+  {include = ""},
 ]
 readme = "README.md"
-version = "0.4.0"
+version = "0.1.0"
 
 [tool.poetry.dependencies]
 anndata = ">=0.7.5"
