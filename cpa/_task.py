@@ -9,12 +9,14 @@ from scvi.module.base import BaseModuleClass
 from scvi.nn import FCLayers
 from scvi.train import TrainingPlan
 
+import numpy as np
 
 class CPATrainingPlan(TrainingPlan):
     def __init__(
         self,
         module: BaseModuleClass,
-        lr=1e-3,
+        covars_to_ncovars: dict,
+        autoencoder_lr=1e-3,
         weight_decay=1e-6,
         n_steps_kl_warmup: Union[int, None] = None,
         n_epochs_kl_warmup: Union[int, None] = None,
@@ -39,7 +41,7 @@ class CPATrainingPlan(TrainingPlan):
         """Training plan for the CPA model"""
         super().__init__(
             module=module,
-            lr=lr,
+            lr=autoencoder_lr,
             weight_decay=weight_decay,
             n_steps_kl_warmup=n_steps_kl_warmup,
             n_epochs_kl_warmup=n_epochs_kl_warmup,
@@ -51,13 +53,15 @@ class CPATrainingPlan(TrainingPlan):
             lr_min=lr_min,
         )
 
+        self.covars_to_ncovars = covars_to_ncovars
+
         # adversarial_models_kwargs = dict(
         #     n_hidden=adversary_width,
         #     n_layers=adversary_depth,
         # )
 
         self.autoencoder_wd = autoencoder_wd
-        self.autoencoder_lr = lr
+        self.autoencoder_lr = autoencoder_lr
         
         self.adversary_lr = adversary_lr
         self.adversary_wd = adversary_wd
@@ -72,6 +76,20 @@ class CPATrainingPlan(TrainingPlan):
 
         self.automatic_optimization = False
         self.iter_count = 0
+
+        self.epoch_history = {
+            'mode': [], 
+            'epoch': [],
+            'recon_loss': [], 
+            'adv_loss': [], 
+            'penalty_adv': [], 
+            'adv_drugs': [], 
+            'penalty_drugs': []
+        }
+
+        for covar in self.covars_to_ncovars.keys():
+            self.epoch_history[f'adv_{covar}'] = []
+            self.epoch_history[f'penalty_{covar}'] = []
 
         # Adversarial modules and hparams
         # self.covariates_adv_nn = nn.ModuleDict(
@@ -167,8 +185,8 @@ class CPATrainingPlan(TrainingPlan):
 
         optimizer_dosers = torch.optim.Adam(
             self.module.drug_network.dosers.parameters(),
-            lr=self.hyper_params["dosers_lr"],
-            weight_decay=self.hyper_params["dosers_wd"])
+            lr=self.dosers_lr,
+            weight_decay=self.dosers_wd)
 
         # params1 = filter(lambda p: p.requires_grad, self.module.parameters())
         # optimizer1 = torch.optim.Adam(
@@ -192,13 +210,13 @@ class CPATrainingPlan(TrainingPlan):
             scheduler_autoencoder = StepLR(optimizer_autoencoder, step_size=self.step_size_lr)
             scheduler_adversaries = StepLR(optimizer_adversaries, step_size=self.step_size_lr)
             scheduler_dosers = StepLR(optimizer_dosers, step_size=self.step_size_lr)
-            schedulers = [scheduler_autoencoder, scheduler_autoencoder]
+            schedulers = [scheduler_autoencoder, scheduler_adversaries, scheduler_dosers]
             return optimizers, schedulers
         else:
             return optimizers
 
     def training_step(self, batch, batch_idx):
-        opt, adv_opt = self.optimizers()
+        opt, opt_adv, opt_dosers = self.optimizers()
 
         inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False)
         reconstruction_loss = self.module.loss(
@@ -207,7 +225,7 @@ class CPATrainingPlan(TrainingPlan):
             generative_outputs=gen_outputs,
         )
 
-        adv_loss, adv_penalty = self.module.adversarial_loss(
+        adv_results = self.module.adversarial_loss(
             tensors=batch,
             inference_outputs=inf_outputs,
             generative_outputs=gen_outputs,
@@ -215,44 +233,48 @@ class CPATrainingPlan(TrainingPlan):
         
         # Adversarial update
         if self.iter_count % self.adversary_steps:
-            adv_opt.zero_grad()
-            adv_loss = adv_loss + self.penalty_adversary * adv_penalty
-            self.manual_backward(adv_loss)
-            adv_opt.step()
+            opt_adv.zero_grad()
+            self.manual_backward(adv_results['adv_loss'] + self.penalty_adversary * adv_results['penalty_adv'])
+            opt_adv.step()
 
         # Model update
         else:
             opt.zero_grad()
-            loss = reconstruction_loss.mean() - self.reg_adversary * adv_loss
-            self.manual_backward(loss)
+            opt_dosers.zero_grad()
+            self.manual_backward(reconstruction_loss - self.reg_adversary * adv_results['adv_loss'])
             opt.step()
+            opt_adv.step()
 
         self.iter_count += 1
         self.log("recon_loss", reconstruction_loss.item(), on_step=True, prog_bar=True)
-        self.log("adv_loss", adv_loss, on_step=True, prog_bar=True)
-        self.log("adv_penalty", adv_penalty, on_step=True, prog_bar=True)
+        self.log("adv_loss", adv_results['adv_loss'], on_step=True, prog_bar=True)
+        self.log("penalty_adv", adv_results['penalty_adv'], on_step=True, prog_bar=True)
 
-        return dict(
-            reconstruction_loss=reconstruction_loss.mean(),
-            adv_loss=adv_loss,
-            adv_penalty=adv_penalty,
-        )
+        for key, val in adv_results.items():
+            adv_results[key] = val.item()
+
+        adv_results.update({'recon_loss': reconstruction_loss.item()})
+
+        return adv_results
         
     def training_epoch_end(self, outputs):
-        reconstruction_loss, adv_loss, adv_penalty = 0, 0, 0
-        for tensors in outputs:
-            reconstruction_loss += tensors["reconstruction_loss"]
-            adv_loss += tensors["adv_loss"]
-            adv_penalty += tensors["adv_penalty"]
-            # n_obs += tensors["n_obs"]
-        # kl global same for each minibatch
-        self.log("reconstruction_loss_train", reconstruction_loss.mean())
-        self.log("adv_loss_train", adv_penalty)
-        self.log("adv_penalty_train", adv_penalty)
+        keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs']
+        for key in keys:
+            self.epoch_history[key].append(np.mean([output[key] for output in outputs]))
+
+        for covar in self.covars_to_ncovars.keys():
+            key1, key2 = f'adv_{covar}', f'penalty_{covar}'
+            self.epoch_history[key1].append(np.mean([output[key1] for output in outputs]))
+            self.epoch_history[key2].append(np.mean([output[key2] for output in outputs]))
+
+        self.epoch_history['epoch'].append(self.current_epoch)
+        self.epoch_history['mode'].append('train')
+        
         if self.step_size_lr:
-            sch, adv_sch = self.lr_schedulers()
+            sch, sch_adv, sch_dosers = self.lr_schedulers()
             sch.step()
-            adv_sch.step()
+            sch_adv.step()
+            sch_dosers.step()
 
     def validation_step(self, batch, batch_idx):
         inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False)
@@ -261,26 +283,37 @@ class CPATrainingPlan(TrainingPlan):
             inference_outputs=inf_outputs,
             generative_outputs=gen_outputs,
         )
-        adv_loss, adv_penalty = self.module.adversarial_loss(
+        adv_results = self.module.adversarial_loss(
             tensors=batch,
             inference_outputs=inf_outputs,
             generative_outputs=gen_outputs,
         )
-        return dict(
-            reconstruction_loss=reconstruction_loss.mean(),
-            adv_loss=adv_loss,
-            adv_penalty=adv_penalty,
-            # n_obs=reconstruction_loss.shape[0],
-        )
+
+        for key, val in adv_results.items():
+            adv_results[key] = val.item()
+            
+        adv_results.update({'recon_loss': reconstruction_loss.item()})
+
+        return adv_results
 
     def validation_epoch_end(self, outputs):
-        reconstruction_loss, adv_loss, adv_penalty = 0, 0, 0
-        for tensors in outputs:
-            reconstruction_loss += tensors["reconstruction_loss"]
-            adv_loss += tensors["adv_loss"]
-            adv_penalty += tensors["adv_penalty"]
-            # n_obs += tensors["n_obs"]
-        # kl global same for each minibatch
-        self.log("reconstruction_loss_validation", reconstruction_loss.mean())
-        self.log("adv_loss_validation", adv_penalty)
-        self.log("adv_penalty_validation", adv_penalty)
+        keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs']
+        for key in keys:
+            self.epoch_history[key].append(np.mean([output[key] for output in outputs]))
+
+        for covar in self.covars_to_ncovars.keys():
+            key1, key2 = f'adv_{covar}', f'penalty_{covar}'
+            self.epoch_history[key1].append(np.mean([output[key1] for output in outputs]))
+            self.epoch_history[key2].append(np.mean([output[key2] for output in outputs]))
+
+        self.epoch_history['epoch'].append(self.current_epoch)
+        self.epoch_history['mode'].append('valid')
+
+        self.log('reconstruction_loss_validation', self.epoch_history['recon_loss'][-1])
+
+    def on_validation_epoch_start(self) -> None:
+        self.module.train()
+        torch.set_grad_enabled(True)
+
+    def on_validation_epoch_end(self) -> None:
+        self.zero_grad()

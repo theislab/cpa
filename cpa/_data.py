@@ -1,6 +1,7 @@
 from anndata import AnnData
 from scvi.dataloaders import DataSplitter
 from scvi.model._utils import parse_use_gpu_arg
+from scvi.dataloaders._ann_dataloader import AnnDataLoader
 from scvi import settings
 
 from typing import Optional
@@ -30,3 +31,15 @@ class ManualDataSplitter(DataSplitter):
         self.pin_memory = (
             True if (settings.dl_pin_memory_gpu_training and gpus != 0) else False
         )
+    
+    def val_dataloader(self):
+        if len(self.val_idx) > 0:
+            return AnnDataLoader(
+                self.adata,
+                indices=self.val_idx,
+                shuffle=False,
+                pin_memory=self.pin_memory,
+                **self.data_loader_kwargs,
+            )
+        else:
+            pass

@@ -159,7 +159,7 @@ class CPAModule(BaseModuleClass):
             }
         )
 
-        self.adv_loss_covariates = nn.CrossEntropyLoss()
+        self.adv_loss_covariates = {covar: nn.CrossEntropyLoss() for covar in self.covars_to_ncovars.keys()}
         self.adv_loss_drugs = nn.BCEWithLogitsLoss()
 
     def _get_inference_input(self, tensors):
@@ -286,40 +286,39 @@ class CPAModule(BaseModuleClass):
         drugs_pred = generative_outputs["drugs_pred"]
         covars_pred = generative_outputs["covars_pred"]
 
+        adv_results = {}
+
         # Classification losses for different covariates
-        adv_covars_loss = 0.0
         for covar in self.covars_to_ncovars.keys():
-            adv_covars_loss += self.adv_loss_covariates(
+            adv_results[f'adv_{covar}'] = self.adv_loss_covariates[covar](
                 covars_pred[covar],
                 covars_dict[covar].long().squeeze(-1),
             )
         
         # Classification loss for different drug combinations
-        adv_drugs_loss = self.adv_loss_drugs(drugs_pred, drugs_doses.gt(0).float())
-        adv_loss = adv_drugs_loss + adv_covars_loss
+        adv_results['adv_drugs'] = self.adv_loss_drugs(drugs_pred, drugs_doses.gt(0).float())
+        adv_results['adv_loss'] = adv_results['adv_drugs'] + sum([adv_results[f'adv_{key}'] for key in self.covars_to_ncovars.keys()])
 
         # Penalty losses
-        adv_penalty_covariates = 0.0
         for covar in self.covars_to_ncovars.keys():
-            covar_penalty = (
+            adv_results[f'penalty_{covar}'] = (
                 torch.autograd.grad(
                     covars_pred[covar].sum(), 
                     latent_basal, 
                     create_graph=True
                 )[0].pow(2).mean()
             )
-            adv_penalty_covariates += covar_penalty
 
-        adv_penalty_treatments = (
+        adv_results['penalty_drugs'] = (
             torch.autograd.grad(
                 drugs_pred.sum(),
                 latent_basal,
                 create_graph=True,
             )[0].pow(2).mean()
         )
-        adv_penalty = adv_penalty_covariates + adv_penalty_treatments
+        adv_results['penalty_adv'] = adv_results['penalty_drugs'] + sum([adv_results[f'penalty_{covar}'] for covar in self.covars_to_ncovars.keys()])
 
-        return adv_loss, adv_penalty
+        return adv_results
 
     def loss(self, tensors, inference_outputs, generative_outputs):
         """Computes the reconstruction loss (AE) or the ELBO (VAE)"""
