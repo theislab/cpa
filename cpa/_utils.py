@@ -1,18 +1,19 @@
 from sklearn.preprocessing import OneHotEncoder, LabelEncoder
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.distributions import Normal
 
 from scvi.data import register_tensor_from_anndata
 from scvi.distributions import NegativeBinomial
 from scvi.nn import FCLayers
+from scvi.data import setup_anndata
+
+import scanpy as sc
 
 import numpy as np
 
 
 def register_dataset(
-    adata,
+    data_path,
     drug_key,
     dose_key,
     covars_keys,
@@ -33,8 +34,11 @@ def register_dataset(
     covars_keys : list
         List of categorical covariates
     """
+    adata = sc.read(data_path)
+
+    setup_anndata(adata)
+
     drugs = adata.obs[drug_key]
-    dosages = adata.obs[dose_key]
 
     # get unique drugs
     drugs_names_unique = set()
@@ -59,14 +63,15 @@ def register_dataset(
     adata.obsm['drugs_doses'] = np.array(drugs_doses)
     
     register_tensor_from_anndata(adata, "drugs_doses", "obsm", "drugs_doses")
-    n_covars_dict = dict()
+    covars_to_ncovars = dict()
     for covar in covars_keys:
         new_covar_key = f"covar_{covar}"
         register_tensor_from_anndata(
             adata, new_covar_key, "obs", covar, is_categorical=True
         )
-        n_covars_dict[new_covar_key] = len(adata.obs[covar].unique())
-    return drug_encoder, n_covars_dict
+        covars_to_ncovars[new_covar_key] = len(adata.obs[covar].unique())
+    
+    return adata, drug_encoder, covars_to_ncovars
 
 
 class _CE_CONSTANTS:
