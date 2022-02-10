@@ -1,3 +1,9 @@
+from sklearn.metrics import r2_score, make_scorer, balanced_accuracy_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import cross_val_score
+from sklearn.preprocessing import StandardScaler
+
+
 import torch
 import torch.distributions as db
 import torch.nn as nn
@@ -78,6 +84,7 @@ class CPAModule(BaseModuleClass):
                 n_layers=autoencoder_depth,
                 use_batch_norm=use_batch_norm,
                 use_layer_norm=use_layer_norm,
+                dropout_rate=0.0,
             )
         else:
             self.encoder = FCLayers(
@@ -87,6 +94,7 @@ class CPAModule(BaseModuleClass):
                 n_layers=autoencoder_depth,
                 use_batch_norm=use_batch_norm,
                 use_layer_norm=use_layer_norm,
+                dropout_rate=0.0,
             )
         
         if self.loss_ae == 'nb':
@@ -100,8 +108,7 @@ class CPAModule(BaseModuleClass):
             )
 
         # Decoder components
-        self.px_r = torch.nn.Parameter(torch.randn(n_genes))
-        if loss_ae == "gauss":
+        if loss_ae in ["gauss", 'mse']:
             self.decoder = DecoderGauss(
                 n_input=n_latent,
                 n_output=n_genes,
@@ -109,9 +116,10 @@ class CPAModule(BaseModuleClass):
                 n_layers=autoencoder_depth,
                 use_batch_norm=use_batch_norm,
                 use_layer_norm=use_layer_norm,
-                
+                dropout_rate=0.0,
             )
-        else:
+        elif loss_ae == 'nb':
+            self.px_r = torch.nn.Parameter(torch.randn(n_genes))
             self.decoder = DecoderNB(
                 n_input=n_latent,
                 n_output=n_genes,
@@ -120,6 +128,9 @@ class CPAModule(BaseModuleClass):
                 use_batch_norm=use_batch_norm,
                 use_layer_norm=use_layer_norm,
             )
+        
+        else:
+            raise Exception('Invalid Loss function for Autoencoder')
 
         # Embeddings
         # 1. Drug Network
@@ -128,6 +139,7 @@ class CPAModule(BaseModuleClass):
                                         doser_type=self.doser_type, 
                                         n_hidden=self.dosers_width, 
                                         n_layers=self.dosers_depth,
+                                        dropout_rate=0.0
                                         )
 
         self.drugs_classifier = FCLayers(
@@ -137,6 +149,7 @@ class CPAModule(BaseModuleClass):
             n_layers=self.adversary_depth,
             use_batch_norm=use_batch_norm,
             use_layer_norm=use_layer_norm,
+            dropout_rate=0.0,
         )
 
         # 2. Covariates Embedding
@@ -154,7 +167,8 @@ class CPAModule(BaseModuleClass):
                               n_hidden=self.adversary_width,
                               n_layers=self.adversary_depth,
                               use_batch_norm=use_batch_norm,
-                              use_layer_norm=use_layer_norm)
+                              use_layer_norm=use_layer_norm,
+                              dropout_rate=0.0)
                 for key, n_unique_cov_values in self.covars_to_ncovars.items()
             }
         )
@@ -193,6 +207,7 @@ class CPAModule(BaseModuleClass):
         covars_dict,
     ):
         # x_ = torch.log1p(x)
+        batch_size = genes.shape[0]
         x_ = genes
         if self.variational:
             qz_m, qz_v, latent_basal = self.encoder(x_)
@@ -208,8 +223,9 @@ class CPAModule(BaseModuleClass):
 
         latent_covariates = []
         for covar, _ in self.covars_to_ncovars.items():
-            latent_covar_i = self.covars_embedding[covar](covars_dict[covar].long()) # batch_size, n_latent
-            latent_covariates.append(latent_covar_i[None]) # 1, batch_size, n_latent
+            latent_covar_i = self.covars_embedding[covar](covars_dict[covar].long())
+            latent_covar_i.view(batch_size, self.n_latent) # batch_size, n_latent
+            latent_covariates.append(latent_covar_i)
         latent_covariates = torch.cat(latent_covariates, 0).sum(0)  # Summing all covariates representations
         latent_treatment = self.drug_network(drugs_doses)
         latent = latent_basal + latent_covariates + latent_treatment
@@ -320,6 +336,42 @@ class CPAModule(BaseModuleClass):
 
         return adv_results
 
+    def r2_metric(self, tensors, inference_outputs, generative_outputs):
+        pred_mean = generative_outputs['means'].detach().cpu().numpy() # batch_size, n_genes
+        pred_var = generative_outputs['variances'].detach().cpu().numpy() # batch_size, n_genes
+
+        x = tensors[_CE_CONSTANTS.X_KEY].detach().cpu().numpy() # batch_size, n_genes
+        
+        true_mean = x.mean(0)
+        pred_mean = pred_mean.mean(0)
+
+        true_var = x.var(0)
+        pred_var = pred_var.mean(0)
+
+        r2_mean = r2_score(true_mean, pred_mean)
+        r2_var = r2_score(true_var, pred_var)
+
+        return r2_mean, r2_var
+
+    def disentanglement(self, tensors, inference_outputs, generative_outputs, linear=True):
+        latent_basal = inference_outputs['latent_basal'].detach().cpu().numpy()
+        drug_names = tensors['drug_name'].detach().cpu().numpy()
+        
+        classifier = LogisticRegression(solver="liblinear",
+                                        multi_class="auto",
+                                        max_iter=10000)
+
+        
+        pert_scores = cross_val_score(classifier, 
+                                      StandardScaler().fit_transform(latent_basal), 
+                                      drug_names.ravel(), 
+                                      scoring=make_scorer(balanced_accuracy_score), 
+                                      cv=5, 
+                                      n_jobs=-1)
+        
+        return pert_scores.mean(), 0.0
+    
+
     def loss(self, tensors, inference_outputs, generative_outputs):
         """Computes the reconstruction loss (AE) or the ELBO (VAE)"""
         x = tensors[_CE_CONSTANTS.X_KEY]
@@ -332,7 +384,7 @@ class CPAModule(BaseModuleClass):
         # log_px = dist_px.log_prob(x).sum(-1)
         # Compute reconstruction
         # reconstruction_loss = -log_px
-        if self.loss_ae == "gauss":
+        if self.loss_ae in ["gauss", "mse"]:
             # TODO: Check with Normal Distribution
             # variance = dist_px.scale ** 2
             # mean = dist_px.loc
@@ -344,18 +396,22 @@ class CPAModule(BaseModuleClass):
             # term2 = (x - mean).pow(2).div(variance.mul(2))
             # reconstruction_loss = (term1 + term2).mean()
 
-        # TODO: Add KL annealing if needed
-        # if self.variational:
-        #     dist_qz = inference_outputs["dist_qz"]
-        #     dist_pz = db.Normal(
-        #         torch.zeros_like(dist_qz.loc), torch.ones_like(dist_qz.scale)
-        #     )
-        #     kl_z = kl_divergence(dist_qz, dist_pz).sum(-1)
-        #     loss = -log_px + kl_z
-        # else:
-        loss = reconstruction_loss
+        # elif self.loss_ae == 'mse':
+        #     reconstruction_loss = (x - means).pow(2)
 
-        return loss
+        # TODO: Add KL annealing if needed
+        kl_loss = 0.0
+        if self.variational:
+            dist_qz = inference_outputs["dist_qz"]
+            dist_pz = db.Normal(
+                torch.zeros_like(dist_qz.loc), torch.ones_like(dist_qz.scale)
+            )
+            kl_loss = kl_divergence(dist_qz, dist_pz).sum(-1)
+            # loss = -log_px + kl_z
+        # else:
+        
+
+        return reconstruction_loss, kl_loss
 
     def get_expression(self, tensors, **inference_kwargs):
         """Computes gene expression means and std.
@@ -373,7 +429,7 @@ class CPAModule(BaseModuleClass):
             compute_loss=False,
             inference_kwargs=inference_kwargs,
         )
-        if self.loss_ae == "gauss":
+        if self.loss_ae in ["gauss", 'mse']:
             mus = generative_outputs["means"]
             stds = generative_outputs["variances"]
             return mus, stds

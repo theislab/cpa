@@ -1,77 +1,10 @@
-from sklearn.preprocessing import OneHotEncoder, LabelEncoder
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-from scvi.data import register_tensor_from_anndata
+
 from scvi.distributions import NegativeBinomial
 from scvi.nn import FCLayers
-from scvi.data import setup_anndata
-
-import scanpy as sc
-
-import numpy as np
-
-
-def register_dataset(
-    data_path,
-    drug_key,
-    dose_key,
-    covars_keys,
-):
-    """TEMPORARY.
-
-    Quick and dirty way to construct the dataloader for the CPA model.
-    This function will be replaced once the AnnData refactor is completed within
-    scvi-tools.
-
-    Parameters
-    ----------
-    adata : AnnData
-    drug_key : str
-        Obs key for the drug names
-    dose_key : str
-        Obs key for drug doses
-    covars_keys : list
-        List of categorical covariates
-    """
-    adata = sc.read(data_path)
-
-    setup_anndata(adata)
-
-    drugs = adata.obs[drug_key]
-
-    # get unique drugs
-    drugs_names_unique = set()
-    for d in drugs:
-        [drugs_names_unique.add(i) for i in d.split("+")]
-    drugs_names_unique = np.array(list(drugs_names_unique))
-    drug_encoder = OneHotEncoder(sparse=False)
-    drug_encoder.fit(drugs_names_unique.reshape(-1, 1))
-
-    drugs_doses = []
-    for i, comb in enumerate(drugs):
-        drugs_combos = drug_encoder.transform(
-            np.array(comb.split("+")).reshape(-1, 1))
-        dose_combos = str(adata.obs[dose_key].values[i]).split("+")
-        for j, d in enumerate(dose_combos):
-            if j == 0:
-                drug_ohe = float(d) * drugs_combos[j]
-            else:
-                drug_ohe += float(d) * drugs_combos[j]
-        drugs_doses.append(drug_ohe)
-    
-    adata.obsm['drugs_doses'] = np.array(drugs_doses)
-    
-    register_tensor_from_anndata(adata, "drugs_doses", "obsm", "drugs_doses")
-    covars_to_ncovars = dict()
-    for covar in covars_keys:
-        new_covar_key = f"covar_{covar}"
-        register_tensor_from_anndata(
-            adata, new_covar_key, "obs", covar, is_categorical=True
-        )
-        covars_to_ncovars[new_covar_key] = len(adata.obs[covar].unique())
-    
-    return adata, drug_encoder, covars_to_ncovars
 
 
 class _CE_CONSTANTS:
@@ -125,6 +58,7 @@ class DecoderGauss(nn.Module):
         n_layers,
         use_layer_norm=True,
         use_batch_norm=False,
+        dropout_rate: float = 0.1,
     ):
         super().__init__()
         self.hidd = FCLayers(
@@ -134,6 +68,7 @@ class DecoderGauss(nn.Module):
             n_hidden=n_hidden,
             use_layer_norm=use_layer_norm,
             use_batch_norm=use_batch_norm,
+            dropout_rate=dropout_rate
         )
 
         self.mean_ = nn.Linear(n_hidden, n_output)
@@ -142,7 +77,7 @@ class DecoderGauss(nn.Module):
 
     def forward(self, inputs):
         hidd_ = self.hidd(inputs)
-        locs = self.mean_(hidd_)
+        locs = F.relu(self.mean_(hidd_))
         # variances = self.var_(hidd_)
         # TODO: Check Normal Distribution
         variances = self.var_(hidd_).exp().add(1).log().add(1e-3)
@@ -175,6 +110,12 @@ class GeneralizedSigmoid(nn.Module):
         )
 
     def forward(self, x):
+        """
+            Parameters
+            ----------
+            x: (batch_size, n_drugs)
+                Doses matrix 
+        """
         if self.non_linearity == 'logsigm':
             c0 = self.bias.sigmoid()
             return (torch.log1p(x) * self.beta + self.bias).sigmoid() - c0
@@ -196,7 +137,12 @@ class GeneralizedSigmoid(nn.Module):
 
 
 class DrugNetwork(nn.Module):
-    def __init__(self, n_drugs, n_latent, doser_type='logsigm', n_hidden=None, n_layers=None):
+    def __init__(self, n_drugs, 
+                 n_latent, 
+                 doser_type='logsigm', 
+                 n_hidden=None, 
+                 n_layers=None, 
+                 dropout_rate: float = 0.1):
         super().__init__()
         self.drug_embedding = nn.Linear(n_drugs, n_latent, bias=False)
         self.doser_type = doser_type
@@ -210,7 +156,8 @@ class DrugNetwork(nn.Module):
                         n_hidden=n_hidden,
                         n_layers=n_layers,
                         use_batch_norm=False,
-                        use_layer_norm=False
+                        use_layer_norm=False,
+                        dropout_rate=dropout_rate
                     )
                 )
         else:

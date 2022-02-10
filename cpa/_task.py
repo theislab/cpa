@@ -17,17 +17,8 @@ class CPATrainingPlan(TrainingPlan):
         module: BaseModuleClass,
         covars_to_ncovars: dict,
         autoencoder_lr=1e-3,
-        weight_decay=1e-6,
         n_steps_kl_warmup: Union[int, None] = None,
         n_epochs_kl_warmup: Union[int, None] = None,
-        reduce_lr_on_plateau: bool = False,
-        lr_factor: float = 0.6,
-        lr_patience: int = 30,
-        lr_threshold: float = 0.0,
-        lr_scheduler_metric: Literal[
-            "elbo_validation", "reconstruction_loss_validation", "kl_local_validation"
-        ] = "reconstruction_loss_validation",
-        lr_min: float = 0,
         adversary_steps: int = 3,
         reg_adversary: int = 5,
         penalty_adversary: int = 3,
@@ -37,20 +28,21 @@ class CPATrainingPlan(TrainingPlan):
         adversary_wd=1e-2,
         autoencoder_wd=1e-6,
         step_size_lr: int = 45,
+        batch_size: int = 32,
     ):
         """Training plan for the CPA model"""
         super().__init__(
             module=module,
             lr=autoencoder_lr,
-            weight_decay=weight_decay,
+            weight_decay=autoencoder_wd,
             n_steps_kl_warmup=n_steps_kl_warmup,
             n_epochs_kl_warmup=n_epochs_kl_warmup,
-            reduce_lr_on_plateau=reduce_lr_on_plateau,
-            lr_factor=lr_factor,
-            lr_patience=lr_patience,
-            lr_threshold=lr_threshold,
-            lr_scheduler_metric=lr_scheduler_metric,
-            lr_min=lr_min,
+            reduce_lr_on_plateau=False,
+            lr_factor=None,
+            lr_patience=None,
+            lr_threshold=None,
+            lr_scheduler_metric=None,
+            lr_min=None,
         )
 
         self.covars_to_ncovars = covars_to_ncovars
@@ -74,6 +66,8 @@ class CPATrainingPlan(TrainingPlan):
 
         self.step_size_lr = step_size_lr
 
+        self.batch_size = batch_size
+
         self.automatic_optimization = False
         self.iter_count = 0
 
@@ -84,7 +78,10 @@ class CPATrainingPlan(TrainingPlan):
             'adv_loss': [], 
             'penalty_adv': [], 
             'adv_drugs': [], 
-            'penalty_drugs': []
+            'penalty_drugs': [],
+            'reg_mean': [],
+            'reg_var': [],
+            'disent_drugs': []
         }
 
         for covar in self.covars_to_ncovars.keys():
@@ -219,7 +216,7 @@ class CPATrainingPlan(TrainingPlan):
         opt, opt_adv, opt_dosers = self.optimizers()
 
         inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False)
-        reconstruction_loss = self.module.loss(
+        reconstruction_loss, kl_loss = self.module.loss(
             tensors=batch,
             inference_outputs=inf_outputs,
             generative_outputs=gen_outputs,
@@ -246,19 +243,22 @@ class CPATrainingPlan(TrainingPlan):
             opt_adv.step()
 
         self.iter_count += 1
-        self.log("recon_loss", reconstruction_loss.item(), on_step=True, prog_bar=True)
-        self.log("adv_loss", adv_results['adv_loss'], on_step=True, prog_bar=True)
-        self.log("penalty_adv", adv_results['penalty_adv'], on_step=True, prog_bar=True)
 
         for key, val in adv_results.items():
             adv_results[key] = val.item()
 
-        adv_results.update({'recon_loss': reconstruction_loss.item()})
+        # reg_mean, reg_var = self.module.r2_metric(batch, inf_outputs, gen_outputs)
+        # disent_drugs, _ = self.module.disentanglement(batch, inf_outputs, gen_outputs)
+
+        results = adv_results
+        results.update({'reg_mean': 0.0, 'reg_var': 0.0})
+        results.update({'disent_drugs': 0.0})
+        results.update({'recon_loss': reconstruction_loss.item()})
 
         return adv_results
         
     def training_epoch_end(self, outputs):
-        keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs']
+        keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean', 'reg_var', 'disent_drugs']
         for key in keys:
             self.epoch_history[key].append(np.mean([output[key] for output in outputs]))
 
@@ -269,6 +269,13 @@ class CPATrainingPlan(TrainingPlan):
 
         self.epoch_history['epoch'].append(self.current_epoch)
         self.epoch_history['mode'].append('train')
+
+        # self.log("recon_loss", self.epoch_history['recon_loss'][-1], prog_bar=True)
+        # self.log("adv_loss", self.epoch_history['adv_loss'][-1], prog_bar=True)
+        # self.log("penalty_adv", self.epoch_history['penalty_adv'][-1], prog_bar=True)
+        # self.log("reg_mean", self.epoch_history['reg_mean'][-1], prog_bar=True)
+        # self.log("reg_var", self.epoch_history['reg_var'][-1], prog_bar=True)
+        # self.log("disent_drugs", self.epoch_history['disent_drugs'][-1], prog_bar=True)
         
         if self.step_size_lr:
             sch, sch_adv, sch_dosers = self.lr_schedulers()
@@ -278,26 +285,33 @@ class CPATrainingPlan(TrainingPlan):
 
     def validation_step(self, batch, batch_idx):
         inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False)
-        reconstruction_loss = self.module.loss(
+        reconstruction_loss, _ = self.module.loss(
             tensors=batch,
             inference_outputs=inf_outputs,
             generative_outputs=gen_outputs,
         )
+
         adv_results = self.module.adversarial_loss(
             tensors=batch,
             inference_outputs=inf_outputs,
             generative_outputs=gen_outputs,
         )
 
+        r2_mean, r2_var = self.module.r2_metric(batch, inf_outputs, gen_outputs)
+        disent_drugs, _ = self.module.disentanglement(batch, inf_outputs, gen_outputs)
+
         for key, val in adv_results.items():
             adv_results[key] = val.item()
-            
-        adv_results.update({'recon_loss': reconstruction_loss.item()})
+        
+        results = adv_results
+        results.update({'reg_mean': r2_mean, 'reg_var': r2_var})
+        results.update({'disent_drugs': disent_drugs})
+        results.update({'recon_loss': reconstruction_loss.item()})
 
-        return adv_results
+        return results
 
     def validation_epoch_end(self, outputs):
-        keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs']
+        keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean', 'reg_var', 'disent_drugs']
         for key in keys:
             self.epoch_history[key].append(np.mean([output[key] for output in outputs]))
 
@@ -309,7 +323,10 @@ class CPATrainingPlan(TrainingPlan):
         self.epoch_history['epoch'].append(self.current_epoch)
         self.epoch_history['mode'].append('valid')
 
-        self.log('reconstruction_loss_validation', self.epoch_history['recon_loss'][-1])
+        # self.log('val_recon_loss', self.epoch_history['recon_loss'][-1], prog_bar=True)
+        self.log('val_reg_mean', self.epoch_history['reg_mean'][-1], prog_bar=True)
+        self.log('val_reg_var', self.epoch_history['reg_var'][-1], prog_bar=True)
+        self.log('val_disent_drugs', self.epoch_history['disent_drugs'][-1], prog_bar=True)
 
     def on_validation_epoch_start(self) -> None:
         self.module.train()
@@ -317,3 +334,5 @@ class CPATrainingPlan(TrainingPlan):
 
     def on_validation_epoch_end(self) -> None:
         self.zero_grad()
+
+        self.val_dataloader
