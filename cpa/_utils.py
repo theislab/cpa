@@ -61,26 +61,25 @@ class DecoderGauss(nn.Module):
         dropout_rate: float = 0.1,
     ):
         super().__init__()
-        self.hidd = FCLayers(
+        self.n_output = n_output
+
+        self.network = FCLayers(
             n_in=n_input,
-            n_out=n_hidden,
-            n_layers=n_layers - 1,
+            n_out=n_output * 2,
+            n_layers=n_layers,
             n_hidden=n_hidden,
             use_layer_norm=use_layer_norm,
             use_batch_norm=use_batch_norm,
             dropout_rate=dropout_rate
         )
 
-        self.mean_ = nn.Linear(n_hidden, n_output)
-        self.var_ = nn.Linear(n_hidden, n_output)
-        
-
     def forward(self, inputs):
-        hidd_ = self.hidd(inputs)
-        locs = F.relu(self.mean_(hidd_))
+        x = self.network(inputs)
+        locs = x[:, :self.n_output]
+        var_ = x[:, self.n_output:]
         # variances = self.var_(hidd_)
         # TODO: Check Normal Distribution
-        variances = self.var_(hidd_).exp().add(1).log().add(1e-3)
+        variances = var_.exp().add(1).log().add(1e-3)
         # return Normal(loc=locs, scale=variances.sqrt())
         return locs, variances
 
@@ -144,7 +143,7 @@ class DrugNetwork(nn.Module):
                  n_layers=None, 
                  dropout_rate: float = 0.1):
         super().__init__()
-        self.drug_embedding = nn.Linear(n_drugs, n_latent, bias=False)
+        self.drug_embedding = nn.Embedding(n_drugs, n_latent)
         self.doser_type = doser_type
         if self.doser_type == 'mlp':
             self.dosers = nn.ModuleList()
@@ -173,8 +172,8 @@ class DrugNetwork(nn.Module):
             for d in range(drugs.size(1)):
                 this_drug = drugs[:, d].view(-1, 1)
                 doses.append(self.dosers[d](this_drug).sigmoid() * this_drug.gt(0))
-            return self.drug_embedding(torch.cat(doses, 1))
+            return torch.cat(doses, 1) @ self.drug_embedding.weight
         else:
-            return self.drug_embedding(self.dosers(drugs))
+            return self.dosers(drugs) @ self.drug_embedding.weight
 
         
