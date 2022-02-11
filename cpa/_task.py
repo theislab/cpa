@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Union
 
 import torch
@@ -19,6 +20,7 @@ class CPATrainingPlan(TrainingPlan):
         autoencoder_lr=1e-3,
         n_steps_kl_warmup: Union[int, None] = None,
         n_epochs_kl_warmup: Union[int, None] = None,
+        n_epochs_warmup: Union[int, None] = None,
         adversary_steps: int = 3,
         reg_adversary: int = 5,
         penalty_adversary: int = 3,
@@ -44,6 +46,8 @@ class CPATrainingPlan(TrainingPlan):
             lr_scheduler_metric=None,
             lr_min=None,
         )
+
+        self.n_epochs_warmup = n_epochs_warmup if n_epochs_warmup is not None else 0
 
         self.covars_to_ncovars = covars_to_ncovars
 
@@ -222,40 +226,50 @@ class CPATrainingPlan(TrainingPlan):
             generative_outputs=gen_outputs,
         )
 
-        adv_results = self.module.adversarial_loss(
-            tensors=batch,
-            inference_outputs=inf_outputs,
-            generative_outputs=gen_outputs,
-        )
-        
-        # Adversarial update
-        if self.iter_count % self.adversary_steps:
-            opt_adv.zero_grad()
-            self.manual_backward(adv_results['adv_loss'] + self.penalty_adversary * adv_results['penalty_adv'])
-            opt_adv.step()
+        if self.current_epoch > self.n_epochs_warmup:
+            adv_results = self.module.adversarial_loss(tensors=batch,
+                                                       inference_outputs=inf_outputs,
+                                                       generative_outputs=gen_outputs,
+            )
 
-        # Model update
+            # Adversarial update
+            if self.iter_count % self.adversary_steps:
+                opt_adv.zero_grad()
+                self.manual_backward(adv_results['adv_loss'] + self.penalty_adversary * adv_results['penalty_adv'])
+                opt_adv.step()
+            # Model update
+            else:
+                opt.zero_grad()
+                opt_dosers.zero_grad()
+                self.manual_backward(reconstruction_loss - self.reg_adversary * adv_results['adv_loss'])
+                opt.step()
+                opt_adv.step()
+            
+            for key, val in adv_results.items():
+                adv_results[key] = val.item()
         else:
+            adv_results = {'adv_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0, 'penalty_drugs': 0.0}
+            for covar in self.covars_to_ncovars.keys():
+                adv_results[f'adv_{covar}'] = 0.0
+                adv_results[f'penalty_{covar}'] = 0.0
+
             opt.zero_grad()
             opt_dosers.zero_grad()
-            self.manual_backward(reconstruction_loss - self.reg_adversary * adv_results['adv_loss'])
+            self.manual_backward(reconstruction_loss)
             opt.step()
             opt_adv.step()
 
         self.iter_count += 1
 
-        for key, val in adv_results.items():
-            adv_results[key] = val.item()
-
         # reg_mean, reg_var = self.module.r2_metric(batch, inf_outputs, gen_outputs)
         # disent_drugs, _ = self.module.disentanglement(batch, inf_outputs, gen_outputs)
 
-        results = adv_results
+        results = adv_results.copy()
         results.update({'reg_mean': 0.0, 'reg_var': 0.0})
         results.update({'disent_drugs': 0.0})
         results.update({'recon_loss': reconstruction_loss.item()})
 
-        return adv_results
+        return results
         
     def training_epoch_end(self, outputs):
         keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean', 'reg_var', 'disent_drugs']
@@ -291,18 +305,23 @@ class CPATrainingPlan(TrainingPlan):
             generative_outputs=gen_outputs,
         )
 
-        adv_results = self.module.adversarial_loss(
-            tensors=batch,
-            inference_outputs=inf_outputs,
-            generative_outputs=gen_outputs,
-        )
+        if self.current_epoch > self.n_epochs_warmup:
+            adv_results = self.module.adversarial_loss(
+                tensors=batch,
+                inference_outputs=inf_outputs,
+                generative_outputs=gen_outputs,
+            )
+            for key, val in adv_results.items():
+                adv_results[key] = val.item()
+        else:
+            adv_results = {'adv_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0, 'penalty_drugs': 0.0}
+            for covar in self.covars_to_ncovars.keys():
+                adv_results[f'adv_{covar}'] = 0.0
+                adv_results[f'penalty_{covar}'] = 0.0
 
         r2_mean, r2_var = self.module.r2_metric(batch, inf_outputs, gen_outputs)
         disent_drugs, _ = self.module.disentanglement(batch, inf_outputs, gen_outputs)
 
-        for key, val in adv_results.items():
-            adv_results[key] = val.item()
-        
         results = adv_results
         results.update({'reg_mean': r2_mean, 'reg_var': r2_var})
         results.update({'disent_drugs': disent_drugs})
