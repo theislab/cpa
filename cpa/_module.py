@@ -15,6 +15,8 @@ from scvi.nn import Encoder, FCLayers
 
 from ._utils import _CE_CONSTANTS, DecoderGauss, DecoderNB, DrugNetwork
 
+import numpy as np
+
 
 class CPAModule(BaseModuleClass):
     """
@@ -55,8 +57,13 @@ class CPAModule(BaseModuleClass):
                  use_batch_norm: bool = True,
                  use_layer_norm: bool = False,
                  variational: bool = False,
+                 seed: int = 0,
                  ):
         super().__init__()
+
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+
         self.n_genes = n_genes
         self.n_drugs = n_drugs
         self.n_latent = n_latent
@@ -292,6 +299,47 @@ class CPAModule(BaseModuleClass):
                 covars_pred=covars_pred,
             )
 
+    def loss(self, tensors, inference_outputs, generative_outputs):
+        """Computes the reconstruction loss (AE) or the ELBO (VAE)"""
+        x = tensors[_CE_CONSTANTS.X_KEY]
+        # x = inference_outputs["x"]
+        
+        # Reconstruction loss & regularizations
+        means = generative_outputs["means"]
+        variances = generative_outputs["variances"]
+
+        # log_px = dist_px.log_prob(x).sum(-1)
+        # Compute reconstruction
+        # reconstruction_loss = -log_px
+        if self.loss_ae in ["gauss", "mse"]:
+            # TODO: Check with Normal Distribution
+            # variance = dist_px.scale ** 2
+            # mean = dist_px.loc
+            term1 = variances.log().div(2)
+            term2 = (x - means).pow(2).div(variances.mul(2))
+
+            reconstruction_loss = (term1 + term2).mean()
+            # term1 = variance.log().div(2)
+            # term2 = (x - mean).pow(2).div(variance.mul(2))
+            # reconstruction_loss = (term1 + term2).mean()
+
+        # elif self.loss_ae == 'mse':
+        #     reconstruction_loss = (x - means).pow(2)
+
+        # TODO: Add KL annealing if needed
+        kl_loss = 0.0
+        if self.variational:
+            dist_qz = inference_outputs["dist_qz"]
+            dist_pz = db.Normal(
+                torch.zeros_like(dist_qz.loc), torch.ones_like(dist_qz.scale)
+            )
+            kl_loss = kl_divergence(dist_qz, dist_pz).sum(-1)
+            # loss = -log_px + kl_z
+        # else:
+        
+
+        return reconstruction_loss, kl_loss
+
     def adversarial_loss(self, tensors, inference_outputs, generative_outputs):
         """Computes adversarial classification losses and regularizations"""
         drugs_doses = tensors[_CE_CONSTANTS.PERTURBATIONS]
@@ -371,47 +419,6 @@ class CPAModule(BaseModuleClass):
         
         return pert_scores.mean(), 0.0
     
-
-    def loss(self, tensors, inference_outputs, generative_outputs):
-        """Computes the reconstruction loss (AE) or the ELBO (VAE)"""
-        x = tensors[_CE_CONSTANTS.X_KEY]
-        # x = inference_outputs["x"]
-        
-        # Reconstruction loss & regularizations
-        means = generative_outputs["means"]
-        variances = generative_outputs["variances"]
-
-        # log_px = dist_px.log_prob(x).sum(-1)
-        # Compute reconstruction
-        # reconstruction_loss = -log_px
-        if self.loss_ae in ["gauss", "mse"]:
-            # TODO: Check with Normal Distribution
-            # variance = dist_px.scale ** 2
-            # mean = dist_px.loc
-            term1 = variances.log().div(2)
-            term2 = (x - means).pow(2).div(variances.mul(2))
-
-            reconstruction_loss = (term1 + term2).mean()
-            # term1 = variance.log().div(2)
-            # term2 = (x - mean).pow(2).div(variance.mul(2))
-            # reconstruction_loss = (term1 + term2).mean()
-
-        # elif self.loss_ae == 'mse':
-        #     reconstruction_loss = (x - means).pow(2)
-
-        # TODO: Add KL annealing if needed
-        kl_loss = 0.0
-        if self.variational:
-            dist_qz = inference_outputs["dist_qz"]
-            dist_pz = db.Normal(
-                torch.zeros_like(dist_qz.loc), torch.ones_like(dist_qz.scale)
-            )
-            kl_loss = kl_divergence(dist_qz, dist_pz).sum(-1)
-            # loss = -log_px + kl_z
-        # else:
-        
-
-        return reconstruction_loss, kl_loss
 
     def get_expression(self, tensors, **inference_kwargs):
         """Computes gene expression means and std.
