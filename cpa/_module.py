@@ -327,18 +327,18 @@ class CPAModule(BaseModuleClass):
         #     reconstruction_loss = (x - means).pow(2)
 
         # TODO: Add KL annealing if needed
-        kl_loss = 0.0
-        if self.variational:
-            dist_qz = inference_outputs["dist_qz"]
-            dist_pz = db.Normal(
-                torch.zeros_like(dist_qz.loc), torch.ones_like(dist_qz.scale)
-            )
-            kl_loss = kl_divergence(dist_qz, dist_pz).sum(-1)
+        # kl_loss = 0.0
+        # if self.variational:
+        #     dist_qz = inference_outputs["dist_qz"]
+        #     dist_pz = db.Normal(
+        #         torch.zeros_like(dist_qz.loc), torch.ones_like(dist_qz.scale)
+        #     )
+        #     kl_loss = kl_divergence(dist_qz, dist_pz).sum(-1)
             # loss = -log_px + kl_z
         # else:
         
 
-        return reconstruction_loss, kl_loss
+        return reconstruction_loss
 
     def adversarial_loss(self, tensors, inference_outputs, generative_outputs):
         """Computes adversarial classification losses and regularizations"""
@@ -431,7 +431,7 @@ class CPAModule(BaseModuleClass):
             Considered inputs
 
         """
-        _, generative_outputs, = self.forward(
+        _, generative_outputs = self.forward(
             tensors,
             compute_loss=False,
             inference_kwargs=inference_kwargs,

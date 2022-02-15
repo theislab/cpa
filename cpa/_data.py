@@ -137,7 +137,10 @@ class ManualDataSplitter(pl.LightningDataModule):
     def val_dataloader(self):
         if len(self.val_idx) > 0:
             data_loader_kwargs = self.data_loader_kwargs.copy()
-            data_loader_kwargs.update({'batch_size': len(self.val_idx)})
+            if len(self.val_idx < 5000):
+                data_loader_kwargs.update({'batch_size': len(self.val_idx)})
+            else:
+                data_loader_kwargs.update({'batch_size': 2048})
             return AnnotationDataLoader(
                 self.dataset,
                 indices=self.val_idx,

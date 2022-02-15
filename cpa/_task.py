@@ -220,20 +220,20 @@ class CPATrainingPlan(TrainingPlan):
         opt, opt_adv, opt_dosers = self.optimizers()
 
         inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False)
-        reconstruction_loss, kl_loss = self.module.loss(
+        reconstruction_loss = self.module.loss(
             tensors=batch,
             inference_outputs=inf_outputs,
             generative_outputs=gen_outputs,
         )
 
-        if self.current_epoch > self.n_epochs_warmup:
+        if self.current_epoch >= self.n_epochs_warmup:
             adv_results = self.module.adversarial_loss(tensors=batch,
                                                        inference_outputs=inf_outputs,
                                                        generative_outputs=gen_outputs,
             )
 
             # Adversarial update
-            if self.iter_count % self.adversary_steps:
+            if self.iter_count % self.adversary_steps != 0:
                 opt_adv.zero_grad()
                 self.manual_backward(adv_results['adv_loss'] + self.penalty_adversary * adv_results['penalty_adv'])
                 opt_adv.step()
@@ -291,7 +291,7 @@ class CPATrainingPlan(TrainingPlan):
         # self.log("reg_var", self.epoch_history['reg_var'][-1], prog_bar=True)
         # self.log("disent_drugs", self.epoch_history['disent_drugs'][-1], prog_bar=True)
         
-        if self.step_size_lr:
+        if self.current_epoch > 1 and self.current_epoch % self.step_size_lr == 0:
             sch, sch_adv, sch_dosers = self.lr_schedulers()
             sch.step()
             sch_adv.step()
@@ -299,7 +299,8 @@ class CPATrainingPlan(TrainingPlan):
 
     def validation_step(self, batch, batch_idx):
         inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False)
-        reconstruction_loss, _ = self.module.loss(
+
+        reconstruction_loss = self.module.loss(
             tensors=batch,
             inference_outputs=inf_outputs,
             generative_outputs=gen_outputs,
@@ -326,6 +327,7 @@ class CPATrainingPlan(TrainingPlan):
         results.update({'reg_mean': r2_mean, 'reg_var': r2_var})
         results.update({'disent_drugs': disent_drugs})
         results.update({'recon_loss': reconstruction_loss.item()})
+        results.update({'cpa_metric': r2_mean + r2_var + 1.0 - disent_drugs})
 
         return results
 
@@ -343,15 +345,15 @@ class CPATrainingPlan(TrainingPlan):
         self.epoch_history['mode'].append('valid')
 
         # self.log('val_recon_loss', self.epoch_history['recon_loss'][-1], prog_bar=True)
+        self.log('cpa_metric', np.mean([output['cpa_metric'] for output in outputs]), prog_bar=True)
         self.log('val_reg_mean', self.epoch_history['reg_mean'][-1], prog_bar=True)
-        self.log('val_reg_var', self.epoch_history['reg_var'][-1], prog_bar=True)
         self.log('val_disent_drugs', self.epoch_history['disent_drugs'][-1], prog_bar=True)
+        self.log('val_reg_var', self.epoch_history['reg_var'][-1], prog_bar=True)
+        
+        
 
     def on_validation_epoch_start(self) -> None:
-        self.module.train()
         torch.set_grad_enabled(True)
 
     def on_validation_epoch_end(self) -> None:
         self.zero_grad()
-
-        self.val_dataloader

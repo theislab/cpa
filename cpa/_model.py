@@ -145,7 +145,7 @@ class CPA(BaseModelClass):
             data_splitter=data_splitter,
             max_epochs=max_epochs,
             use_gpu=use_gpu,
-            early_stopping_monitor="val_reg_mean",
+            early_stopping_monitor="cpa_metric",
             early_stopping_mode='max',
             **trainer_kwargs,
         )
@@ -260,7 +260,7 @@ class CPA(BaseModelClass):
         Tuple
             Gene expression means and standard variations
         """
-        assert self.module.loss_ae == "gauss"
+        assert self.module.loss_ae in ["gauss", 'mse']
         self.module.eval()
 
         adata = self._validate_anndata(adata)
