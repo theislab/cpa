@@ -48,6 +48,7 @@ class CPAModule(BaseModuleClass):
                  n_latent: int = 256,
                  loss_ae="gauss",
                  doser_type="linear",
+                 output_activation: str = 'linear',
                  autoencoder_width=256,
                  autoencoder_depth=2,
                  adversary_width=128,
@@ -56,6 +57,7 @@ class CPAModule(BaseModuleClass):
                  dosers_depth: int = 2,
                  use_batch_norm: bool = True,
                  use_layer_norm: bool = False,
+                 dropout_rate: float = 0.0,
                  variational: bool = False,
                  seed: int = 0,
                  ):
@@ -91,7 +93,8 @@ class CPAModule(BaseModuleClass):
                 n_layers=autoencoder_depth,
                 use_batch_norm=use_batch_norm,
                 use_layer_norm=use_layer_norm,
-                dropout_rate=0.0,
+                dropout_rate=dropout_rate,
+                activation_fn=nn.ReLU,
             )
         else:
             self.encoder = FCLayers(
@@ -101,7 +104,8 @@ class CPAModule(BaseModuleClass):
                 n_layers=autoencoder_depth,
                 use_batch_norm=use_batch_norm,
                 use_layer_norm=use_layer_norm,
-                dropout_rate=0.0,
+                dropout_rate=dropout_rate,
+                activation_fn=nn.ReLU,
             )
         
         if self.loss_ae == 'nb':
@@ -123,7 +127,8 @@ class CPAModule(BaseModuleClass):
                 n_layers=autoencoder_depth,
                 use_batch_norm=use_batch_norm,
                 use_layer_norm=use_layer_norm,
-                dropout_rate=0.0,
+                output_activation=output_activation,
+                dropout_rate=dropout_rate,
             )
         elif loss_ae == 'nb':
             self.px_r = torch.nn.Parameter(torch.randn(n_genes))
@@ -134,6 +139,7 @@ class CPAModule(BaseModuleClass):
                 n_layers=autoencoder_depth,
                 use_batch_norm=use_batch_norm,
                 use_layer_norm=use_layer_norm,
+                dropout_rate=dropout_rate,
             )
         
         else:
@@ -146,7 +152,7 @@ class CPAModule(BaseModuleClass):
                                         doser_type=self.doser_type, 
                                         n_hidden=self.dosers_width, 
                                         n_layers=self.dosers_depth,
-                                        dropout_rate=0.0
+                                        dropout_rate=dropout_rate,
                                         )
 
         self.drugs_classifier = FCLayers(
@@ -156,7 +162,8 @@ class CPAModule(BaseModuleClass):
             n_layers=self.adversary_depth,
             use_batch_norm=use_batch_norm,
             use_layer_norm=use_layer_norm,
-            dropout_rate=0.0,
+            dropout_rate=dropout_rate,
+            activation_fn=nn.ReLU,
         )
 
         # 2. Covariates Embedding
@@ -175,7 +182,7 @@ class CPAModule(BaseModuleClass):
                               n_layers=self.adversary_depth,
                               use_batch_norm=use_batch_norm,
                               use_layer_norm=use_layer_norm,
-                              dropout_rate=0.0)
+                              dropout_rate=dropout_rate)
                 for key, n_unique_cov_values in self.covars_to_ncovars.items()
             }
         )
@@ -385,8 +392,8 @@ class CPAModule(BaseModuleClass):
         return adv_results
 
     def r2_metric(self, tensors, inference_outputs, generative_outputs):
-        pred_mean = generative_outputs['means'].detach().cpu().numpy() # batch_size, n_genes
-        pred_var = generative_outputs['variances'].detach().cpu().numpy() # batch_size, n_genes
+        pred_mean = torch.nan_to_num(generative_outputs['means'], nan=1e2, neginf=-1e3, posinf=1e3).detach().cpu().numpy() # batch_size, n_genes
+        pred_var = torch.nan_to_num(generative_outputs['variances'], nan=1e2, neginf=-1e3, posinf=1e3).detach().cpu().numpy() # batch_size, n_genes
 
         x = tensors[_CE_CONSTANTS.X_KEY].detach().cpu().numpy() # batch_size, n_genes
         
@@ -403,6 +410,7 @@ class CPAModule(BaseModuleClass):
 
     def disentanglement(self, tensors, inference_outputs, generative_outputs, linear=True):
         latent_basal = inference_outputs['latent_basal'].detach().cpu().numpy()
+        latent = inference_outputs['latent'].detach().cpu().numpy()
         drug_names = tensors['drug_name'].detach().cpu().numpy()
         
         classifier = LogisticRegression(solver="liblinear",
@@ -410,14 +418,26 @@ class CPAModule(BaseModuleClass):
                                         max_iter=10000)
 
         
-        pert_scores = cross_val_score(classifier, 
+        pert_basal_scores = cross_val_score(classifier, 
                                       StandardScaler().fit_transform(latent_basal), 
                                       drug_names.ravel(), 
                                       scoring=make_scorer(balanced_accuracy_score), 
                                       cv=5, 
                                       n_jobs=-1)
+
+        classifier = LogisticRegression(solver="liblinear",
+                                        multi_class="auto",
+                                        max_iter=10000)
+
         
-        return pert_scores.mean(), 0.0
+        pert_scores = cross_val_score(classifier, 
+                                      StandardScaler().fit_transform(latent), 
+                                      drug_names.ravel(), 
+                                      scoring=make_scorer(balanced_accuracy_score), 
+                                      cv=5, 
+                                      n_jobs=-1)
+        
+        return pert_basal_scores.mean(), pert_scores.mean()
     
 
     def get_expression(self, tensors, **inference_kwargs):
@@ -442,3 +462,8 @@ class CPAModule(BaseModuleClass):
             return mus, stds
         else:
             raise ValueError
+    
+    def get_drug_embeddings(self, tensors, **inference_kwargs):
+        inputs = self._get_inference_input(tensors)
+        return self.drug_network(inputs['drugs_doses'])
+        
