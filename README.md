@@ -25,10 +25,10 @@ Here are the most straightforward differences existing between the two implement
 ## To-Do list
 
 - [x] create code structure like scvi-tools-skeleton
-- [ ] Check `FCLayers` implementation vs. CPA's MLP class
+- [x] Check `FCLayers` implementation vs. CPA's MLP class -> Need to modify FCLayers to remove batchnorm from last layer and add last_layer_act parameter
 - [x] Add another optimizer for dosers network
 - [ ] Check decoder's output (mean and variance) vs. Normal Distribution
-- [ ] Check Why the scVI's wrapper version of CPA is much more time expensive and memory consuming.
+- [x] Check Why the scVI's wrapper version of CPA is much more time expensive and memory consuming.
 - [x] Pre-process dataset and add drug-dose matrix in `obsm` in scVI's wrapper
 - [x] Implement MLP for dosers
 - [ ] Check NB distribution
@@ -38,7 +38,7 @@ Here are the most straightforward differences existing between the two implement
 - [ ] Train network with `NB` loss
 - [ ] Reproducibility
     - [ ] Norman 2019
-    - [x] Pachter
+    - [x] SciPlex 2
     - [ ] Trapnell
 
 
