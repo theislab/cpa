@@ -10,14 +10,17 @@ from scvi.nn import FCLayers
 class _CE_CONSTANTS:
     X_KEY = "X"
     PERTURBATIONS = "drugs_doses"
-    C_KEY = "covariates"
-    CAT_COVS_KEY = "cat_covs"
-    CONT_COVS_KEY = "cont_covs"
-    BATCH_KEY = "batch_indices"
-    LOCAL_L_MEAN_KEY = "local_l_mean"
-    LOCAL_L_VAR_KEY = "local_l_var"
-    LABELS_KEY = "labels"
-    PROTEIN_EXP_KEY = "protein_expression"
+    DRUG_KEY = None
+    DOSE_KEY = None
+    COVARS_KEYS = []
+    # C_KEY = "covariates"
+    # CAT_COVS_KEY = "cat_covs"
+    # CONT_COVS_KEY = "cont_covs"
+    # BATCH_KEY = "batch_indices"
+    # LOCAL_L_MEAN_KEY = "local_l_mean"
+    # LOCAL_L_VAR_KEY = "local_l_var"
+    # LABELS_KEY = "labels"
+    # PROTEIN_EXP_KEY = "protein_expression"
 
 
 class DecoderNB(nn.Module):
@@ -58,10 +61,12 @@ class DecoderGauss(nn.Module):
         n_layers,
         use_layer_norm=True,
         use_batch_norm=False,
+        output_activation: str = 'linear',
         dropout_rate: float = 0.1,
     ):
         super().__init__()
         self.n_output = n_output
+        self.output_activation = output_activation
 
         self.network = FCLayers(
             n_in=n_input,
@@ -70,13 +75,17 @@ class DecoderGauss(nn.Module):
             n_hidden=n_hidden,
             use_layer_norm=use_layer_norm,
             use_batch_norm=use_batch_norm,
-            dropout_rate=dropout_rate
+            dropout_rate=dropout_rate,
+            activation_fn=nn.ReLU,
         )
 
     def forward(self, inputs):
         x = self.network(inputs)
         locs = x[:, :self.n_output]
         var_ = x[:, self.n_output:]
+        if self.output_activation == 'relu':
+            locs = F.relu(locs)            
+        
         # variances = self.var_(hidd_)
         # TODO: Check Normal Distribution
         variances = var_.exp().add(1).log().add(1e-3)
@@ -125,10 +134,10 @@ class GeneralizedSigmoid(nn.Module):
             return x
 
     def one_drug(self, x, i):
-        if self.nonlin == 'logsigm':
+        if self.non_linearity == 'logsigm':
             c0 = self.bias[0][i].sigmoid()
             return (torch.log1p(x) * self.beta[0][i] + self.bias[0][i]).sigmoid() - c0
-        elif self.nonlin == 'sigm':
+        elif self.non_linearity == 'sigm':
             c0 = self.bias[0][i].sigmoid()
             return (x * self.beta[0][i] + self.bias[0][i]).sigmoid() - c0
         else:
@@ -175,5 +184,3 @@ class DrugNetwork(nn.Module):
             return torch.cat(doses, 1) @ self.drug_embedding.weight
         else:
             return self.dosers(drugs) @ self.drug_embedding.weight
-
-        
