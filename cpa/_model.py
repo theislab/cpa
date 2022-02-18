@@ -18,10 +18,6 @@ from ._module import CPAModule, _CE_CONSTANTS
 from ._task import CPATrainingPlan
 from ._data import ManualDataSplitter
 
-
-from ray.tune.integration.pytorch_lightning import TuneReportCallback, TuneReportCheckpointCallback
-
-
 class CPA(BaseModelClass):
     def __init__(
         self,
@@ -52,8 +48,14 @@ class CPA(BaseModelClass):
         super().__init__(adata)
         self.n_genes = self.summary_stats["n_vars"]
         self.n_drugs = adata.obsm[_CE_CONSTANTS.PERTURBATIONS].shape[-1]
-
         self.covars_to_ncovars = covars_to_ncovars
+        
+        mappings = self.adata.uns['_scvi']['categorical_mappings']
+        self.drugs = mappings[f'{_CE_CONSTANTS.DRUG_KEY}_scvi']['mapping']
+        self.covars = {
+            _CE_CONSTANTS.COVARS_KEYS[i]: list(mappings[f'{_CE_CONSTANTS.COVARS_KEYS[i]}_scvi']['mapping']) \
+            for i in range(len(self.covars_to_ncovars.keys()))
+        }
         
         self.module = CPAModule(
             n_genes=self.n_genes,
@@ -134,10 +136,18 @@ class CPA(BaseModelClass):
         trainer_kwargs['check_val_every_n_epoch'] = trainer_kwargs.get('check_val_every_n_epoch', 20)
 
         if hyperopt:
-            hyperopt_callback = TuneReportCallback({"loss": "val_recon_loss"}, 
-                                                    on="validation_end")
+            from pytorch_lightning.loggers import TensorBoardLogger
+            from ray.tune.integration.pytorch_lightning import TuneReportCallback, TuneReportCheckpointCallback
+            from ray import tune
 
-            trainer_kwargs.update({'callbacks': [hyperopt_callback]})
+            hyperopt_callback = TuneReportCallback({"cpa_metric": "cpa_metric", 
+                                                    'val_reg_mean': 'val_reg_mean',
+                                                    'val_reg_var': 'val_reg_var',
+                                                    'val_disent_basal_drugs': 'val_disent_basal_drugs'}, 
+                                                    on="validation_end")
+            tensorboard_logger = TensorBoardLogger(save_dir=tune.get_trial_dir(), name="", version="."),
+
+            trainer_kwargs.update({'callbacks': [hyperopt_callback], 'logger': tensorboard_logger})
 
         runner = TrainRunner(
             self,
@@ -152,32 +162,6 @@ class CPA(BaseModelClass):
         runner()
         
         self.epoch_history = pd.DataFrame().from_dict(self.training_plan.epoch_history)
-
-
-    @torch.no_grad()
-    def get_drug_embeddings(
-        self, 
-        adata: Optional[AnnData] = None,
-        indices: Optional[Sequence[int]] = None,
-        batch_size: Optional[int] = 32
-    ) -> np.array:
-        # if self.is_trained_ is False:
-        #     raise RuntimeError("Please train the model first.")
-
-        # adata = self._validate_anndata(adata)
-        # if indices is None:
-        #     indices = np.arange(adata.n_obs)
-        # scdl = self._make_data_loader(
-        #     adata=adata, indices=indices, batch_size=batch_size, shuffle=False
-        # )
-        # latent = []
-        # for tensors in scdl:
-        #     inference_inputs = self.module._get_inference_input(tensors)
-        #     outputs = self.module.inference(**inference_inputs)
-        #     z = outputs["latent_basal"]
-        #     latent += [z.cpu()]
-        # return torch.cat(latent).numpy()
-        pass
 
     @torch.no_grad()
     def get_latent_representation(
@@ -225,25 +209,6 @@ class CPA(BaseModelClass):
         return latent_basal_adata, latent_adata
 
     @torch.no_grad()
-    def get_reconstruction_error(
-        self,
-        adata: Optional[AnnData] = None,
-        indices: Optional[Sequence[int]] = None,
-        batch_size: Optional[int] = 32,
-    ):
-        """Estimates the reconstruction error (AE) or ELBO (VAE)"""
-        adata = self._validate_anndata(adata)
-        scdl = self._make_data_loader(
-            adata=adata, indices=indices, batch_size=batch_size
-        )
-        reco = []
-        for tensors in scdl:
-            _, _, _reco = self.module(tensors)
-            reco.append(_reco.cpu())
-        reco = torch.cat(reco, dim=0)
-        return reco.mean()
-
-    @torch.no_grad()
     def predict(
         self,
         adata: Optional[AnnData] = None,
@@ -284,6 +249,7 @@ class CPA(BaseModelClass):
 
         return pred_adata_mean, pred_adata_var
 
+    @torch.no_grad()
     def get_drug_embeddings(self, dose=1.0) -> AnnData:
         """Computes all drug embeddings
 
@@ -296,8 +262,127 @@ class CPA(BaseModelClass):
         treatments = dose * torch.eye(self.n_drugs, device=self.device)
         embeds = self.module.drug_network(treatments).detach().cpu().numpy()
 
-        drug_adata = AnnData(X=embeds, obs={'drug_name': list(self.drug_encoder.categories_[0])}) 
+        drug_adata = AnnData(X=embeds, obs={'drug_name': list(self.drugs)}) 
         return drug_adata
+
+    @torch.no_grad()
+    def get_covar_embeddings(self, covariate: str):
+        """Computes Covariate embeddings
+
+        Parameters
+        ----------
+        covariate : str
+            covariate to be computed
+
+        """
+        key = f'covar_{covariate}'
+        covar_ids = torch.arange(self.covars_to_ncovars[key], device=self.device)
+        embeddings = self.module.covars_embedding[key](covar_ids).detach().cpu().numpy()
+
+        covar_adata = AnnData(X=embeddings, obs={f'{covariate}': self.covars[covariate]})
+        return covar_adata
+
+    @torch.no_grad()
+    def get_disentanglement_score(self, adata: Optional[AnnData] = None, 
+                                        indices: Optional[Sequence[int]] = None,
+                                        batch_size: Optional[int] = 32):
+
+        pass
+
+    def latent_dose_response(self, drugs=None, 
+                                   dose=None, 
+                                   contvar_min=0, 
+                                   contvar_max=1, 
+                                   n_points=100):
+        """
+        Parameters
+        ----------
+        drugs : list
+            List of drug names.
+        doses : np.array (default: None)
+            Doses values. If None, default values will be generated on a grid:
+            n_points in range [contvar_min, contvar_max].
+        contvar_min : float (default: 0)
+            Minimum dose value to generate for default option.
+        contvar_max : float (default: 0)
+            Maximum dose value to generate for default option.
+        n_points : int (default: 100)
+            Number of dose points to generate for default option.
+        Returns
+        -------
+        pd.DataFrame
+        """
+        if drugs is None:
+            drugs = self.drugs
+
+        if dose is None:
+            dose = np.linspace(contvar_min, contvar_max, n_points)
+
+        n_points = len(dose)
+
+        df = pd.DataFrame(columns=[_CE_CONSTANTS.DRUG_KEY, _CE_CONSTANTS.DOSE_KEY, 'response'])
+
+        for drug in drugs:
+            d = np.where(self.drugs == drug)[0][0]
+            
+            this_drug = torch.Tensor(dose).to(self.device).view(-1, 1)
+            
+            # TODO: Do this for doser_type == 'mlp'
+            response = self.module.drug_network.dosers.one_drug(this_drug.view(-1), d)
+            response = list(response.detach().cpu().numpy().reshape(-1))
+
+            df_drug = pd.DataFrame(list(zip([drug] * n_points, dose, response)), columns=df.columns)
+            df = pd.concat([df, df_drug])
+
+        return df.reset_index(drop=True)
+
+    def latent_dose_response2D(self, perturbations, dose=None,
+        contvar_min=0, contvar_max=1, n_points=100,):
+        """
+        Parameters
+        ----------
+        perturbations : list, optional (default: None)
+            List of atomic drugs for which to return latent dose response.
+            Currently drug combinations are not supported.
+        doses : np.array (default: None)
+            Doses values. If None, default values will be generated on a grid:
+            n_points in range [contvar_min, contvar_max].
+        contvar_min : float (default: 0)
+            Minimum dose value to generate for default option.
+        contvar_max : float (default: 0)
+            Maximum dose value to generate for default option.
+        n_points : int (default: 100)
+            Number of dose points to generate for default option.
+        Returns
+        -------
+        pd.DataFrame
+        """
+        # dosers work only for atomic drugs. TODO add drug combinations
+
+        assert len(perturbations) == 2, "You should provide a list of 2 perturbations."
+
+        if dose is None:
+            dose = np.linspace(contvar_min, contvar_max, n_points)
+        n_points = len(dose)
+
+        df = pd.DataFrame(columns=perturbations + ['response'])
+        response = {}
+
+        for drug in perturbations:
+            d = np.where(self.drugs == drug)[0][0]
+            this_drug = torch.Tensor(dose).to(self.device).view(-1, 1)
+            
+            # TODO: doser_type == mlp implementation
+            response[drug] = self.module.drug_network.dosers.one_drug(this_drug.view(-1),\
+                d).detach().cpu().numpy().reshape(-1)
+
+        l = 0
+        for i in range(len(dose)):
+            for j in range(len(dose)):
+                df.loc[l] = [dose[i], dose[j], response[perturbations[0]][i] + response[perturbations[1]][j]]
+                l += 1
+
+        return df.reset_index(drop=True)
     
     def save(self, dir_path: str, overwrite: bool = False, save_anndata: bool = False, **anndata_write_kwargs):
         os.makedirs(dir_path, exist_ok=True)
