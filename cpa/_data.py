@@ -11,6 +11,7 @@ import pytorch_lightning as pl
 from scvi.model._utils import parse_use_gpu_arg
 from scvi.dataloaders._ann_dataloader import AnnDataLoader, BatchSampler
 from scvi.dataloaders._anntorchdataset import AnnTorchDataset
+from scvi.dataloaders import DataSplitter
 from scvi import settings
 
 from typing import Optional, Union
@@ -18,6 +19,8 @@ from typing import Optional, Union
 from scvi.data import register_tensor_from_anndata
 from scvi.data import setup_anndata
 from torch.utils.data import DataLoader, SubsetRandomSampler, Dataset
+
+from ._utils import _CE_CONSTANTS
 
 def prepare_dataset(
     data_path,
@@ -41,6 +44,10 @@ def prepare_dataset(
     covars_keys : list
         List of categorical covariates
     """
+    _CE_CONSTANTS.DRUG_KEY = drug_key
+    _CE_CONSTANTS.COVARS_KEYS = covars_keys
+    _CE_CONSTANTS.DOSE_KEY = dose_key
+
     adata = sc.read(data_path)
 
     setup_anndata(adata)
@@ -81,8 +88,7 @@ def prepare_dataset(
     
     return adata, drug_encoder, covars_to_ncovars
 
-
-class ManualDataSplitter(pl.LightningDataModule):
+class ManualDataSplitter(DataSplitter):
     """Manual train validation test splitter"""
 
     def __init__(
@@ -94,13 +100,12 @@ class ManualDataSplitter(pl.LightningDataModule):
         use_gpu: bool = False,
         **kwargs,
     ):
-        super().__init__()
-        self.adata = adata
-        self.train_idx = train_idx
-        self.val_idx = val_idx
-        self.test_idx = test_idx
-        self.use_gpu = use_gpu
+        super().__init__(adata)
         self.data_loader_kwargs = kwargs
+        self.use_gpu = use_gpu
+        self.val_idx = val_idx
+        self.train_idx = train_idx
+        self.test_idx = test_idx
 
     def setup(self, stage: Optional[str] = None):
         gpus, self.device = parse_use_gpu_arg(self.use_gpu, return_device=True)
@@ -108,32 +113,6 @@ class ManualDataSplitter(pl.LightningDataModule):
             True if (settings.dl_pin_memory_gpu_training and gpus != 0) else False
         )
 
-        if "_scvi" not in self.adata.uns.keys():
-            raise ValueError("Please run setup_anndata() on your anndata object first.")
-
-        # data_and_attributes = None
-        # data_registry = self.adata.uns["_scvi"]["data_registry"]
-        # for key in data_and_attributes.keys():
-        #     if key not in data_registry.keys():
-        #         raise ValueError(
-        #             "{} required for model but not included when setup_anndata was run".format(
-        #                 key
-        #             )
-        #         )
-
-        self.dataset = AnnTorchDataset(self.adata, getitem_tensors=None)
-
-    def train_dataloader(self):
-        return AnnotationDataLoader(
-            self.dataset,
-            indices=self.train_idx,
-            shuffle=True,
-            drop_last=3,
-            pin_memory=self.pin_memory,
-            **self.data_loader_kwargs,
-        )
-            
-    
     def val_dataloader(self):
         if len(self.val_idx) > 0:
             data_loader_kwargs = self.data_loader_kwargs.copy()
@@ -141,8 +120,8 @@ class ManualDataSplitter(pl.LightningDataModule):
                 data_loader_kwargs.update({'batch_size': len(self.val_idx)})
             else:
                 data_loader_kwargs.update({'batch_size': 2048})
-            return AnnotationDataLoader(
-                self.dataset,
+            return AnnDataLoader(
+                self.adata,
                 indices=self.val_idx,
                 shuffle=True,
                 pin_memory=self.pin_memory,
@@ -153,8 +132,8 @@ class ManualDataSplitter(pl.LightningDataModule):
 
     def test_dataloader(self):
         if len(self.test_idx) > 0:
-            return AnnotationDataLoader(
-                self.dataset,
+            return AnnDataLoader(
+                self.adata,
                 indices=self.test_idx,
                 shuffle=True,
                 pin_memory=self.pin_memory,
@@ -162,41 +141,3 @@ class ManualDataSplitter(pl.LightningDataModule):
             )
         else:
             pass
-
-class AnnotationDataLoader(DataLoader):
-    def __init__(
-        self,
-        dataset: Dataset,
-        shuffle=False,
-        indices=None,
-        batch_size=128,
-        data_and_attributes: Optional[dict] = None,
-        drop_last: Union[bool, int] = False,
-        **data_loader_kwargs,
-    ):
-
-        self.dataset = dataset
-
-        sampler_kwargs = {
-            "batch_size": batch_size,
-            "shuffle": shuffle,
-            "drop_last": drop_last,
-        }
-
-        if indices is None:
-            indices = np.arange(len(self.dataset))
-            sampler_kwargs["indices"] = indices
-        else:
-            if hasattr(indices, "dtype") and indices.dtype is np.dtype("bool"):
-                indices = np.where(indices)[0].ravel()
-            indices = np.asarray(indices)
-            sampler_kwargs["indices"] = indices
-
-        self.sampler_kwargs = sampler_kwargs
-        sampler = BatchSampler(**self.sampler_kwargs)
-        # sampler = SubsetRandomSampler(list(indices))
-        self.data_loader_kwargs = copy.copy(data_loader_kwargs)
-        # do not touch batch size here, sampler gives batched indices
-        self.data_loader_kwargs.update({"sampler": sampler, "batch_size": None})
-
-        super().__init__(self.dataset, **self.data_loader_kwargs)
