@@ -85,6 +85,7 @@ class CPATrainingPlan(TrainingPlan):
             'penalty_drugs': [],
             'reg_mean': [],
             'reg_var': [],
+            'disent_basal_drugs': [],
             'disent_drugs': []
         }
 
@@ -243,7 +244,7 @@ class CPATrainingPlan(TrainingPlan):
                 opt_dosers.zero_grad()
                 self.manual_backward(reconstruction_loss - self.reg_adversary * adv_results['adv_loss'])
                 opt.step()
-                opt_adv.step()
+                opt_dosers.step()
             
             for key, val in adv_results.items():
                 adv_results[key] = val.item()
@@ -266,13 +267,14 @@ class CPATrainingPlan(TrainingPlan):
 
         results = adv_results.copy()
         results.update({'reg_mean': 0.0, 'reg_var': 0.0})
+        results.update({'disent_basal_drugs': 0.0})
         results.update({'disent_drugs': 0.0})
         results.update({'recon_loss': reconstruction_loss.item()})
 
         return results
         
     def training_epoch_end(self, outputs):
-        keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean', 'reg_var', 'disent_drugs']
+        keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean', 'reg_var', 'disent_basal_drugs', 'disent_drugs']
         for key in keys:
             self.epoch_history[key].append(np.mean([output[key] for output in outputs]))
 
@@ -297,6 +299,13 @@ class CPATrainingPlan(TrainingPlan):
             sch_adv.step()
             sch_dosers.step()
 
+    def get_progress_bar_dict(self):
+        items = super().get_progress_bar_dict()
+        items.pop('v_num')
+        # items.pop('loss')
+        return items
+        
+
     def validation_step(self, batch, batch_idx):
         inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False)
 
@@ -306,33 +315,34 @@ class CPATrainingPlan(TrainingPlan):
             generative_outputs=gen_outputs,
         )
 
-        if self.current_epoch > self.n_epochs_warmup:
-            adv_results = self.module.adversarial_loss(
-                tensors=batch,
-                inference_outputs=inf_outputs,
-                generative_outputs=gen_outputs,
-            )
-            for key, val in adv_results.items():
-                adv_results[key] = val.item()
-        else:
-            adv_results = {'adv_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0, 'penalty_drugs': 0.0}
-            for covar in self.covars_to_ncovars.keys():
-                adv_results[f'adv_{covar}'] = 0.0
-                adv_results[f'penalty_{covar}'] = 0.0
+        # if self.current_epoch >= self.n_epochs_warmup:
+        #     adv_results = self.module.adversarial_loss(
+        #         tensors=batch,
+        #         inference_outputs=inf_outputs,
+        #         generative_outputs=gen_outputs,
+        #     )
+        #     for key, val in adv_results.items():
+        #         adv_results[key] = val.item()
+        # else:
+        adv_results = {'adv_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0, 'penalty_drugs': 0.0}
+        for covar in self.covars_to_ncovars.keys():
+            adv_results[f'adv_{covar}'] = 0.0
+            adv_results[f'penalty_{covar}'] = 0.0
 
         r2_mean, r2_var = self.module.r2_metric(batch, inf_outputs, gen_outputs)
-        disent_drugs, _ = self.module.disentanglement(batch, inf_outputs, gen_outputs)
+        disent_basal_drugs, disent_drugs = self.module.disentanglement(batch, inf_outputs, gen_outputs)
 
         results = adv_results
         results.update({'reg_mean': r2_mean, 'reg_var': r2_var})
+        results.update({'disent_basal_drugs': disent_basal_drugs})
         results.update({'disent_drugs': disent_drugs})
         results.update({'recon_loss': reconstruction_loss.item()})
-        results.update({'cpa_metric': r2_mean + r2_var + 1.0 - disent_drugs})
+        results.update({'cpa_metric': r2_mean + 1.0 - disent_basal_drugs + disent_drugs})
 
         return results
 
     def validation_epoch_end(self, outputs):
-        keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean', 'reg_var', 'disent_drugs']
+        keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean', 'reg_var', 'disent_basal_drugs', 'disent_drugs']
         for key in keys:
             self.epoch_history[key].append(np.mean([output[key] for output in outputs]))
 
@@ -347,13 +357,12 @@ class CPATrainingPlan(TrainingPlan):
         # self.log('val_recon_loss', self.epoch_history['recon_loss'][-1], prog_bar=True)
         self.log('cpa_metric', np.mean([output['cpa_metric'] for output in outputs]), prog_bar=True)
         self.log('val_reg_mean', self.epoch_history['reg_mean'][-1], prog_bar=True)
+        self.log('val_disent_basal_drugs', self.epoch_history['disent_basal_drugs'][-1], prog_bar=True)
         self.log('val_disent_drugs', self.epoch_history['disent_drugs'][-1], prog_bar=True)
         self.log('val_reg_var', self.epoch_history['reg_var'][-1], prog_bar=True)
         
-        
+    # def on_validation_epoch_start(self) -> None:
+    #     torch.set_grad_enabled(True)
 
-    def on_validation_epoch_start(self) -> None:
-        torch.set_grad_enabled(True)
-
-    def on_validation_epoch_end(self) -> None:
-        self.zero_grad()
+    # def on_validation_epoch_end(self) -> None:
+    #     self.zero_grad()
