@@ -2,6 +2,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from scvi.dataloaders import DataSplitter
+from scvi.model._utils import parse_use_gpu_arg
+from scvi.dataloaders._ann_dataloader import AnnDataLoader, BatchSampler
+from scvi.dataloaders._anntorchdataset import AnnTorchDataset
+from scvi import settings
+
+from typing import Optional, Union
+
+from anndata import AnnData
 
 from scvi.distributions import NegativeBinomial
 from scvi.nn import FCLayers
@@ -25,13 +34,13 @@ class _CE_CONSTANTS:
 
 class DecoderNB(nn.Module):
     def __init__(
-        self,
-        n_input,
-        n_output,
-        n_hidden,
-        n_layers,
-        use_layer_norm=True,
-        use_batch_norm=False,
+            self,
+            n_input,
+            n_output,
+            n_hidden,
+            n_layers,
+            use_layer_norm=True,
+            use_batch_norm=False,
     ):
         super().__init__()
         self.hidd = nn.Sequential(
@@ -54,15 +63,15 @@ class DecoderNB(nn.Module):
 
 class DecoderGauss(nn.Module):
     def __init__(
-        self,
-        n_input,
-        n_output,
-        n_hidden,
-        n_layers,
-        use_layer_norm=True,
-        use_batch_norm=False,
-        output_activation: str = 'linear',
-        dropout_rate: float = 0.1,
+            self,
+            n_input,
+            n_output,
+            n_hidden,
+            n_layers,
+            use_layer_norm=True,
+            use_batch_norm=False,
+            output_activation: str = 'linear',
+            dropout_rate: float = 0.1,
     ):
         super().__init__()
         self.n_output = n_output
@@ -84,11 +93,12 @@ class DecoderGauss(nn.Module):
         locs = x[:, :self.n_output]
         var_ = x[:, self.n_output:]
         if self.output_activation == 'relu':
-            locs = F.relu(locs)            
-        
-        # variances = self.var_(hidd_)
+            locs = F.relu(locs)
+
+            # variances = self.var_(hidd_)
         # TODO: Check Normal Distribution
-        variances = var_.exp().add(1).log().add(1e-3)
+        # variances = var_.exp().add(1).log().add(1e-3)
+        variances = F.softplus(var_)
         # return Normal(loc=locs, scale=variances.sqrt())
         return locs, variances
 
@@ -108,6 +118,7 @@ class GeneralizedSigmoid(nn.Module):
         """
         super(GeneralizedSigmoid, self).__init__()
         self.non_linearity = non_linearity
+        self.n_drugs = n_drugs
         self.beta = torch.nn.Parameter(
             torch.ones(1, n_drugs),
             requires_grad=True
@@ -117,19 +128,34 @@ class GeneralizedSigmoid(nn.Module):
             requires_grad=True
         )
 
-    def forward(self, x):
+        self.vmap = None
+
+    def forward(self, x, y=None):
         """
             Parameters
             ----------
-            x: (batch_size, n_drugs)
-                Doses matrix 
+            x: (batch_size, n_drugs) or (batch_size, )
+                Doses matrix
+            y: (batch_size, )
         """
         if self.non_linearity == 'logsigm':
-            c0 = self.bias.sigmoid()
-            return (torch.log1p(x) * self.beta + self.bias).sigmoid() - c0
+            if y is None:
+                c0 = self.bias.sigmoid()
+                return (torch.log1p(x) * self.beta + self.bias).sigmoid() - c0
+            else:
+                bias = self.bias[0][y]
+                beta = self.beta[0][y]
+                c0 = bias.sigmoid()
+                return (torch.log1p(x) * beta + bias).sigmoid() - c0
         elif self.non_linearity == 'sigm':
-            c0 = self.bias.sigmoid()
-            return (x * self.beta + self.bias).sigmoid() - c0
+            if y is None:
+                c0 = self.bias.sigmoid()
+                return (x * self.beta + self.bias).sigmoid() - c0
+            else:
+                bias = self.bias[0][y]
+                beta = self.beta[0][y]
+                c0 = bias.sigmoid()
+                return (x * beta + bias).sigmoid() - c0
         else:
             return x
 
@@ -145,13 +171,14 @@ class GeneralizedSigmoid(nn.Module):
 
 
 class DrugNetwork(nn.Module):
-    def __init__(self, n_drugs, 
-                 n_latent, 
-                 doser_type='logsigm', 
-                 n_hidden=None, 
-                 n_layers=None, 
+    def __init__(self, n_drugs,
+                 n_latent,
+                 doser_type='logsigm',
+                 n_hidden=None,
+                 n_layers=None,
                  dropout_rate: float = 0.1):
         super().__init__()
+        self.n_latent = n_latent
         self.drug_embedding = nn.Embedding(n_drugs, n_latent)
         self.doser_type = doser_type
         if self.doser_type == 'mlp':
@@ -160,7 +187,7 @@ class DrugNetwork(nn.Module):
                 self.dosers.append(
                     FCLayers(
                         n_in=1,
-                        n_out=1, 
+                        n_out=1,
                         n_hidden=n_hidden,
                         n_layers=n_layers,
                         use_batch_norm=False,
@@ -171,10 +198,10 @@ class DrugNetwork(nn.Module):
         else:
             self.dosers = GeneralizedSigmoid(n_drugs, non_linearity=self.doser_type)
 
-    def forward(self, drugs):
+    def forward(self, drugs, doses=None):
         """
-            drugs: (batch_size, n_drugs)
-                OneHot multiplied by doses
+            drugs: (batch_size, n_drugs) if combinatorial else (batch_size, )
+                OneHot multiplied by doses if combinatorial is True
         """
         if self.doser_type == 'mlp':
             doses = []
@@ -183,4 +210,66 @@ class DrugNetwork(nn.Module):
                 doses.append(self.dosers[d](this_drug).sigmoid() * this_drug.gt(0))
             return torch.cat(doses, 1) @ self.drug_embedding.weight
         else:
-            return self.dosers(drugs) @ self.drug_embedding.weight
+            if doses is not None:
+                drugs = drugs.long().view(-1,)
+                doses = doses.float().view(-1,)
+                scaled_dosages = self.dosers(doses, drugs)
+                drug_embeddings = self.drug_embedding(drugs)
+                return torch.einsum('b,be->be', [scaled_dosages, drug_embeddings])
+            else:
+                return self.dosers(drugs) @ self.drug_embedding.weight
+
+
+class ManualDataSplitter(DataSplitter):
+    """Manual train validation test splitter"""
+
+    def __init__(
+            self,
+            adata: AnnData,
+            train_idx,
+            val_idx,
+            test_idx,
+            use_gpu: bool = False,
+            **kwargs,
+    ):
+        super().__init__(adata)
+        self.data_loader_kwargs = kwargs
+        self.use_gpu = use_gpu
+        self.val_idx = val_idx
+        self.train_idx = train_idx
+        self.test_idx = test_idx
+
+    def setup(self, stage: Optional[str] = None):
+        gpus, self.device = parse_use_gpu_arg(self.use_gpu, return_device=True)
+        self.pin_memory = (
+            True if (settings.dl_pin_memory_gpu_training and gpus != 0) else False
+        )
+
+    def val_dataloader(self):
+        if len(self.val_idx) > 0:
+            data_loader_kwargs = self.data_loader_kwargs.copy()
+            if len(self.val_idx < 5000):
+                data_loader_kwargs.update({'batch_size': len(self.val_idx)})
+            else:
+                data_loader_kwargs.update({'batch_size': 2048})
+            return AnnDataLoader(
+                self.adata,
+                indices=self.val_idx,
+                shuffle=True,
+                pin_memory=self.pin_memory,
+                **data_loader_kwargs,
+            )
+        else:
+            pass
+
+    def test_dataloader(self):
+        if len(self.test_idx) > 0:
+            return AnnDataLoader(
+                self.adata,
+                indices=self.test_idx,
+                shuffle=True,
+                pin_memory=self.pin_memory,
+                **self.data_loader_kwargs,
+            )
+        else:
+            pass
