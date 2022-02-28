@@ -321,43 +321,20 @@ class ComPertAPI:
         for cov_pert in self.seen_covars_perts['train']:
             if self.num_measured_points['train'][cov_pert] > thrh:
                 *covs_loop, pert_loop, dose_loop = cov_pert.split('_')
-                emb_perts_loop = []
-                # if '+' in pert_loop:
-                #     pert_loop_list = pert_loop.split('+')
-                #     dose_loop_list = dose_loop.split('+')
-                #     for _dose in pd.Series(dose_loop_list).unique():
-                #         tmp_ad = self.get_drug_embeddings(dose=float(_dose))
-                #         tmp_ad.obs['pert_dose'] = tmp_ad.obs.condition + '_' + _dose
-                #         emb_perts_loop.append(tmp_ad)
-                #
-                #     emb_perts_loop = emb_perts_loop[0].concatenate(emb_perts_loop[1:])
-                #     X = (
-                #             sum([emb_covars.X[emb_covars.obs.cell_type == cov_loop] for cov_loop in covs_loop])
-                #             + np.expand_dims(
-                #         emb_perts_loop.X[
-                #             emb_perts_loop.obs.pert_dose.isin(
-                #                 [
-                #                     pert_loop_list[i] + '_' + dose_loop_list[i]
-                #                     for i in range(len(pert_loop_list))
-                #                 ]
-                #             )
-                #         ].sum(axis=0),
-                #         axis=0
-                #     )
-                #     )
-                #     if X.shape[0] > 1:
-                #         raise ValueError('Error with comb computation')
-                # else:
                 emb_perts = self.get_drug_embeddings(dose=float(dose_loop))
-                X = (
-                        sum([emb_covars.X[emb_covars.obs.cell_type == cov_loop] for cov_loop in covs_loop])
-                        + emb_perts.X[emb_perts.obs.condition == pert_loop]
-                )
+                emb_covs = None
+                for cov_value in covs_loop:
+                    for cov in self.unique_covars.keys():
+                        if cov_value in self.unique_covars[cov]:
+                            emb = emb_covars[emb_covars.obs[cov] == cov_value].X
+                            emb_covs = emb_covs + emb if emb_covs is not None else emb
+                X = emb_covs + emb_perts.X[emb_perts.obs.condition == pert_loop]
                 tmp_ad = sc.AnnData(
                     X=X
                 )
                 tmp_ad.obs['cov_pert'] = '_'.join([*covs_loop, pert_loop, dose_loop])
-            tmp_ad_list.append(tmp_ad)
+
+                tmp_ad_list.append(tmp_ad)
 
         self.comb_emb = tmp_ad_list[0].concatenate(tmp_ad_list[1:])
 

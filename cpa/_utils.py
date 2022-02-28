@@ -14,6 +14,7 @@ from anndata import AnnData
 
 from scvi.distributions import NegativeBinomial
 from scvi.nn import FCLayers
+from torch.distributions import Normal
 
 
 class _CE_CONSTANTS:
@@ -21,6 +22,7 @@ class _CE_CONSTANTS:
     PERTURBATIONS = "drugs_doses"
     DRUG_KEY = None
     DOSE_KEY = None
+    CONTROL_KEY = None
     COVARS_KEYS = []
     # C_KEY = "covariates"
     # CAT_COVS_KEY = "cat_covs"
@@ -61,6 +63,40 @@ class DecoderNB(nn.Module):
         return NegativeBinomial(mu=px_rate, theta=px_r.exp())
 
 
+class SimpleEncoder(nn.Module):
+    def __init__(
+            self,
+            n_input,
+            n_output,
+            n_hidden,
+            n_layers,
+            use_layer_norm=True,
+            use_batch_norm=False,
+            output_activation: str = 'linear',
+            dropout_rate: float = 0.1,
+            activation_fn=nn.ReLU,
+    ):
+        super().__init__()
+        self.n_output = n_output
+        self.output_activation = output_activation
+
+        self.network = FCLayers(
+            n_in=n_input,
+            n_out=n_hidden,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            use_layer_norm=use_layer_norm,
+            use_batch_norm=use_batch_norm,
+            dropout_rate=dropout_rate,
+            activation_fn=activation_fn,
+        )
+        self.z = nn.Linear(n_hidden, n_output)
+
+    def forward(self, inputs):
+        z = self.z(self.network(inputs))
+        return z
+
+
 class DecoderGauss(nn.Module):
     def __init__(
             self,
@@ -79,7 +115,7 @@ class DecoderGauss(nn.Module):
 
         self.network = FCLayers(
             n_in=n_input,
-            n_out=n_output * 2,
+            n_out=n_hidden,
             n_layers=n_layers,
             n_hidden=n_hidden,
             use_layer_norm=use_layer_norm,
@@ -87,20 +123,19 @@ class DecoderGauss(nn.Module):
             dropout_rate=dropout_rate,
             activation_fn=nn.ReLU,
         )
+        self.mean = nn.Linear(n_hidden, n_output, bias=False)
+        self.var = nn.Linear(n_hidden, n_output, bias=False)
 
     def forward(self, inputs):
         x = self.network(inputs)
-        locs = x[:, :self.n_output]
-        var_ = x[:, self.n_output:]
+        locs = self.mean(x)
+        var_ = self.var(x)
         if self.output_activation == 'relu':
             locs = F.relu(locs)
 
-            # variances = self.var_(hidd_)
-        # TODO: Check Normal Distribution
-        # variances = var_.exp().add(1).log().add(1e-3)
-        variances = F.softplus(var_)
-        # return Normal(loc=locs, scale=variances.sqrt())
-        return locs, variances
+        variances = var_.exp().add(1).log().add(1e-3)
+        return Normal(loc=locs, scale=variances.sqrt())
+        # return locs, variances
 
 
 class GeneralizedSigmoid(nn.Module):
@@ -211,8 +246,8 @@ class DrugNetwork(nn.Module):
             return torch.cat(doses, 1) @ self.drug_embedding.weight
         else:
             if doses is not None:
-                drugs = drugs.long().view(-1,)
-                doses = doses.float().view(-1,)
+                drugs = drugs.long().view(-1, )
+                doses = doses.float().view(-1, )
                 scaled_dosages = self.dosers(doses, drugs)
                 drug_embeddings = self.drug_embedding(drugs)
                 return torch.einsum('b,be->be', [scaled_dosages, drug_embeddings])

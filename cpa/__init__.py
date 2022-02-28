@@ -1,7 +1,5 @@
 from ._model import CPA
-from ._data import prepare_dataset
-from ._plotting import *
-from . import _metrics as metrics
+from . import _plotting as pl
 
 # __all__ = [
 #     "CPA",

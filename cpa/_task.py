@@ -27,6 +27,7 @@ class CPATrainingPlan(TrainingPlan):
             penalty_adversary: int = 3,
             dosers_lr=1e-3,
             dosers_wd=1e-7,
+            kl_weight=None,
             adversary_lr=3e-4,
             adversary_wd=1e-2,
             autoencoder_wd=1e-6,
@@ -66,6 +67,8 @@ class CPATrainingPlan(TrainingPlan):
         self.reg_adversary = reg_adversary
         self.penalty_adversary = penalty_adversary
 
+        self.kl_coeff = kl_weight
+
         self.dosers_lr = dosers_lr
         self.dosers_wd = dosers_wd
 
@@ -87,7 +90,8 @@ class CPATrainingPlan(TrainingPlan):
             'reg_mean': [],
             'reg_var': [],
             'disent_basal': [],
-            'disent_after': []
+            'disent_after': [],
+            'adv_acc': []
         }
 
         for covar in self.covars_encoder.keys():
@@ -221,61 +225,83 @@ class CPATrainingPlan(TrainingPlan):
         opt, opt_adv, opt_dosers = self.optimizers()
 
         inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False)
-        reconstruction_loss = self.module.loss(
-            tensors=batch,
-            inference_outputs=inf_outputs,
-            generative_outputs=gen_outputs,
-        )
 
         if self.current_epoch >= self.n_epochs_warmup:
-            adv_results = self.module.adversarial_loss(tensors=batch,
-                                                       inference_outputs=inf_outputs,
-                                                       generative_outputs=gen_outputs,
-                                                       )
-
             # Adversarial update
             if self.iter_count % self.adversary_steps != 0:
                 opt_adv.zero_grad()
+                latent_basal = inf_outputs['latent_basal']
+                adv_results = self.module.adversarial_loss(tensors=batch, latent_basal=latent_basal)
                 self.manual_backward(adv_results['adv_loss'] + self.penalty_adversary * adv_results['penalty_adv'])
                 opt_adv.step()
+
+                for key, val in adv_results.items():
+                    adv_results[key] = val.item()
+
+                results = adv_results.copy()
+                results.update({'recon_loss': 0.0})
+
             # Model update
             else:
                 opt.zero_grad()
                 opt_dosers.zero_grad()
-                self.manual_backward(reconstruction_loss - self.reg_adversary * adv_results['adv_loss'])
+                reconstruction_loss, kl_loss = self.module.loss(
+                    tensors=batch,
+                    inference_outputs=inf_outputs,
+                    generative_outputs=gen_outputs,
+                )
+                latent_basal = inf_outputs['latent_basal']
+                adv_results = self.module.adversarial_loss(tensors=batch, latent_basal=latent_basal)
+
+                loss = reconstruction_loss - self.reg_adversary * adv_results['adv_loss']
+                if self.kl_coeff is not None and self.kl_coeff != 0.0:
+                    loss += self.kl_coeff * kl_loss.mean()
+                self.manual_backward(loss)
                 opt.step()
                 opt_dosers.step()
 
-            for key, val in adv_results.items():
-                adv_results[key] = val.item()
+                for key, val in adv_results.items():
+                    adv_results[key] = val.item()
+
+                results = adv_results.copy()
+
+                results.update({'recon_loss': reconstruction_loss.item()})
+
         else:
             adv_results = {'adv_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0, 'penalty_drugs': 0.0}
             for covar in self.covars_encoder.keys():
                 adv_results[f'adv_{covar}'] = 0.0
                 adv_results[f'penalty_{covar}'] = 0.0
 
+            results = adv_results.copy()
+
             opt.zero_grad()
             opt_dosers.zero_grad()
-            self.manual_backward(reconstruction_loss)
+            reconstruction_loss, kl_loss = self.module.loss(
+                tensors=batch,
+                inference_outputs=inf_outputs,
+                generative_outputs=gen_outputs,
+            )
+            loss = reconstruction_loss
+            if self.kl_coeff is not None:
+                loss += self.kl_coeff * kl_loss
+            self.manual_backward(loss)
             opt.step()
             opt_dosers.step()
 
+            results.update({'recon_loss': reconstruction_loss.item()})
+
         self.iter_count += 1
 
-        # reg_mean, reg_var = self.module.r2_metric(batch, inf_outputs, gen_outputs)
-        # disent_drugs, _ = self.module.disentanglement(batch, inf_outputs, gen_outputs)
-
-        results = adv_results.copy()
         results.update({'reg_mean': 0.0, 'reg_var': 0.0})
         results.update({'disent_basal': 0.0})
         results.update({'disent_after': 0.0})
-        results.update({'recon_loss': reconstruction_loss.item()})
 
         return results
 
     def training_epoch_end(self, outputs):
         keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean', 'reg_var',
-                'disent_basal', 'disent_after']
+                'disent_basal', 'disent_after', 'adv_acc']
         for key in keys:
             self.epoch_history[key].append(np.mean([output[key] for output in outputs]))
 
@@ -287,7 +313,8 @@ class CPATrainingPlan(TrainingPlan):
         self.epoch_history['epoch'].append(self.current_epoch)
         self.epoch_history['mode'].append('train')
 
-        # self.log("recon_loss", self.epoch_history['recon_loss'][-1], prog_bar=True)
+        self.log("recon", self.epoch_history['recon_loss'][-1], prog_bar=True)
+        self.log("adv_acc", self.epoch_history['adv_acc'][-1], prog_bar=True)
         # self.log("adv_loss", self.epoch_history['adv_loss'][-1], prog_bar=True)
         # self.log("penalty_adv", self.epoch_history['penalty_adv'][-1], prog_bar=True)
         # self.log("reg_mean", self.epoch_history['reg_mean'][-1], prog_bar=True)
@@ -309,7 +336,7 @@ class CPATrainingPlan(TrainingPlan):
     def validation_step(self, batch, batch_idx):
         inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False)
 
-        reconstruction_loss = self.module.loss(
+        reconstruction_loss, kl_loss = self.module.loss(
             tensors=batch,
             inference_outputs=inf_outputs,
             generative_outputs=gen_outputs,
@@ -338,7 +365,8 @@ class CPATrainingPlan(TrainingPlan):
         results.update({'disent_after': disent_after})
         results.update({'recon_loss': reconstruction_loss.item()})
         results.update({'cpa_metric': r2_mean + 1.0 + len(
-            [covar for covar, unique_covars in self.covars_encoder.items() if len(unique_covars) > 1]) - disent_basal + disent_after})
+            [covar for covar, unique_covars in self.covars_encoder.items() if
+             len(unique_covars) > 1]) - disent_basal + disent_after})
 
         return results
 
@@ -356,12 +384,12 @@ class CPATrainingPlan(TrainingPlan):
         self.epoch_history['epoch'].append(self.current_epoch)
         self.epoch_history['mode'].append('valid')
 
-        # self.log('val_recon_loss', self.epoch_history['recon_loss'][-1], prog_bar=True)
-        self.log('cpa_metric', np.mean([output['cpa_metric'] for output in outputs]), prog_bar=True)
-        self.log('val_reg_mean', self.epoch_history['reg_mean'][-1], prog_bar=True)
-        self.log('val_disent_basal', self.epoch_history['disent_basal'][-1], prog_bar=True)
-        self.log('val_disent_after', self.epoch_history['disent_after'][-1], prog_bar=True)
-        self.log('val_reg_var', self.epoch_history['reg_var'][-1], prog_bar=True)
+        self.log('val_recon', self.epoch_history['recon_loss'][-1], prog_bar=True)
+        self.log('cpa_metric', np.mean([output['cpa_metric'] for output in outputs]), prog_bar=False)
+        self.log('val_reg_mean', self.epoch_history['reg_mean'][-1], prog_bar=False)
+        self.log('val_disnt_basal', self.epoch_history['disent_basal'][-1], prog_bar=True)
+        self.log('val_disnt_after', self.epoch_history['disent_after'][-1], prog_bar=True)
+        # self.log('val_reg_var', self.epoch_history['reg_var'][-1], prog_bar=True)
 
     # def on_validation_epoch_start(self) -> None:
     #     torch.set_grad_enabled(True)

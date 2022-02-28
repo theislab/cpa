@@ -5,10 +5,12 @@ from typing import Optional, Sequence, Union, List
 import numpy as np
 import pandas as pd
 import torch
+from scvi.dataloaders import DataSplitter
+from sklearn.preprocessing import OneHotEncoder
 from torch.nn import functional as F
 
 from anndata import AnnData
-from scvi.data import setup_anndata
+from scvi.data import setup_anndata, register_tensor_from_anndata
 from scvi.model.base import BaseModelClass
 from scvi.train import TrainRunner
 from scvi.train._callbacks import SaveBestState
@@ -16,42 +18,71 @@ from scvi.utils import setup_anndata_dsp
 
 from ._module import CPAModule, _CE_CONSTANTS
 from ._task import CPATrainingPlan
-from ._utils import ManualDataSplitter
+from ._data import ManualDataSplitter
 
 logger = logging.getLogger(__name__)
 
 
 class CPA(BaseModelClass):
+    """CPA model
+
+        Parameters
+        ----------
+        adata : Anndata
+            Registered Annotation Dataset
+
+        n_latent: int
+            Number of latent dimensions used for embeddings and Autoencoder
+
+        loss_ae: str
+            Either `gauss` or `NB`. Autoencoder loss function.
+
+        doser_type: str
+            Type of doser network. Either `sigm`, `logsigm` or `mlp`.
+
+        split_key : str, optional
+            Key used to split the data between train test and validation.
+            This must correspond to a observation key for the adata, composed of values
+            'train', 'test', and 'ood'. By default None.
+
+        **hyper_params:
+            CPA's hyper-parameters.
+
+
+        Examples
+        --------
+        >>> import cpa
+        >>> import scanpy as sc
+        >>> adata = sc.read('dataset.h5ad')
+        >>> adata = cpa.CPA.setup_anndata(adata,
+                                          drug_key='condition',
+                                          dose_key='dose_val',
+                                          categorical_covariate_keys=['cell_type'],
+                                          control_key='control'
+                                          )
+        >>> hyperparams = {'autoencoder_depth': 3, 'autoencoder_width': 256}
+        >>> model = cpa.CPA(adata,
+                            n_latent=256,
+                            loss_ae='gauss',
+                            doser_type='logsigm',
+                            split_key='split',
+                            )
+    """
+    covars_encoder: dict
+    drug_encoder: dict
+
     def __init__(
             self,
             adata: AnnData,
             n_latent: int,
             loss_ae: str,
             doser_type: str,
-            covars_encoder: dict,
             split_key: str = None,
-            drug_encoder=None,
             **hyper_params,
     ):
-        """CPA model
-
-        Parameters
-        ----------
-        adata : Anndata
-            Must be properly registered
-
-        batch_keys_to_dim : str
-        Map between covariates and the associated number of categories
-
-        split_key : str, optional
-            Key used to split the data between train test and validation.
-            This must correspond to a observation key for the adata, composed of values
-            'train', 'test', and 'ood'. By default None
-        """
         super().__init__(adata)
         self.n_genes = self.summary_stats["n_vars"]
-        self.n_drugs = len(drug_encoder)
-        self.covars_encoder = covars_encoder
+        self.n_drugs = len(self.drug_encoder)
         self.split_key = split_key
 
         mappings = self.adata.uns['_scvi']['categorical_mappings']
@@ -70,8 +101,6 @@ class CPA(BaseModelClass):
             doser_type=doser_type,
             **hyper_params,
         )
-
-        self.drug_encoder = drug_encoder
 
         val_idx, train_idx, test_idx = None, None, None
         if split_key is not None:
@@ -93,25 +122,102 @@ class CPA(BaseModelClass):
     @setup_anndata_dsp.dedent
     def setup_anndata(
             adata: AnnData,
-            batch_key: Optional[str] = None,
-            labels_key: Optional[str] = None,
-            layer: Optional[str] = None,
+            drug_key: str,
+            dose_key: str,
+            control_key: str,
+            combinatorial=False,
             categorical_covariate_keys: Optional[List[str]] = None,
             continuous_covariate_keys: Optional[List[str]] = None,
             copy: bool = False,
     ) -> Optional[AnnData]:
         """
-        """
+        Annotation Data setup function
 
-        return setup_anndata(
+        Parameters
+        ----------
+        adata: AnnData
+
+        drug_key: str
+
+        dose_key: str
+
+        control_key: str
+
+        combinatorial: bool
+
+        categorical_covariate_keys: list
+
+        continuous_covariate_keys: list
+
+        copy: bool
+
+        Returns
+        -------
+        A tuple of (adata, drug_encoder, covars_encoder)
+
+        adata: processed adata
+        drug_encoder: Label Encoder for drug labels
+        covars_encoder: Label Encoder for categorical covariates
+
+        """
+        _CE_CONSTANTS.DRUG_KEY = drug_key
+        _CE_CONSTANTS.COVARS_KEYS = categorical_covariate_keys
+        _CE_CONSTANTS.DOSE_KEY = dose_key
+        _CE_CONSTANTS.CONTROL_KEY = control_key
+
+        setup_anndata(
             adata,
-            batch_key=batch_key,
-            labels_key=labels_key,
-            layer=layer,
-            categorical_covariate_keys=categorical_covariate_keys,
+            batch_key=None,
+            labels_key=None,
+            layer=None,
+            categorical_covariate_keys=None,
             continuous_covariate_keys=continuous_covariate_keys,
             copy=copy,
         )
+
+        register_tensor_from_anndata(adata, "drug_name", "obs", drug_key, is_categorical=True)
+        register_tensor_from_anndata(adata, "dose_value", "obs", dose_key, is_categorical=False)
+        register_tensor_from_anndata(adata, control_key, "obs", control_key, is_categorical=True)
+
+        if combinatorial:
+            drugs = adata.obs[drug_key]
+
+            # get unique drugs
+            drugs_names_unique = set()
+            for d in drugs:
+                [drugs_names_unique.add(i) for i in d.split("+")]
+            drugs_names_unique = np.array(list(drugs_names_unique))
+
+            drug_encoder = OneHotEncoder(sparse=False)
+            drug_encoder.fit(drugs_names_unique.reshape(-1, 1))
+
+            drugs_doses = []
+            for i, comb in enumerate(drugs):
+                drugs_combos = drug_encoder.transform(
+                    np.array(comb.split("+")).reshape(-1, 1))
+                dose_combos = str(adata.obs[dose_key].values[i]).split("+")
+                for j, d in enumerate(dose_combos):
+                    if j == 0:
+                        drug_ohe = float(d) * drugs_combos[j]
+                    else:
+                        drug_ohe += float(d) * drugs_combos[j]
+                drugs_doses.append(drug_ohe)
+
+            adata.obsm['drugs_doses'] = np.array(drugs_doses)
+            register_tensor_from_anndata(adata, "drugs_doses", "obsm", "drugs_doses")
+
+        else:
+            drug_encoder = {drug: i for i, drug in
+                            enumerate(adata.uns['_scvi']['categorical_mappings'][f'{drug_key}_scvi']['mapping'])}
+
+        covars_encoder = {}
+        for covar in categorical_covariate_keys:
+            register_tensor_from_anndata(adata, covar, "obs", covar, is_categorical=True)
+            covars_encoder[covar] = {covar_value: index for index, covar_value in enumerate(
+                list(adata.uns['_scvi']['categorical_mappings'][f'{covar}_scvi']['mapping']))}
+
+        CPA.covars_encoder = covars_encoder
+        CPA.drug_encoder = drug_encoder
 
     def train(
             self,
@@ -126,6 +232,30 @@ class CPA(BaseModelClass):
             save_path: Optional[str] = None,
             **trainer_kwargs,
     ):
+        """
+        Trains CPA on the given dataset
+
+        Parameters
+        ----------
+        max_epochs: int
+            Maximum number of epochs for training
+        use_gpu: bool
+            Whether to use GPU if available
+        train_size: float
+            Fraction of training data in the case of randomly splitting dataset to train/valdiation
+                if `split_key` is not set in model's constructor
+        validation_size: float
+            Fraction of validation data in the case of randomly splitting dataset to train/valdiation
+                if `split_key` is not set in model's constructor
+        batch_size: int
+            Size of mini-batches for training
+        early_stopping: bool
+            If `True`, EarlyStopping will be used during training on validation dataset
+        plan_kwargs: dict
+            `CPATrainingPlan` parameters
+        save_path: str
+            Path to save the model after the end of training
+        """
         if max_epochs is None:
             n_cells = self.adata.n_obs
             max_epochs = np.min([round((20000 / n_cells) * 400), 400])
@@ -136,25 +266,28 @@ class CPA(BaseModelClass):
                 and (self.train_idx is not None)
                 and (self.test_idx is not None)
         )
-        # if manual_splitting:
-        data_splitter = ManualDataSplitter(
-            self.adata,
-            train_idx=self.train_idx,
-            val_idx=self.val_idx,
-            test_idx=self.test_idx,
-            batch_size=batch_size,
-            use_gpu=use_gpu,
-        )
-        # else:
-        # data_splitter = DataSplitter(
-        #     self.adata,
-        #     train_size=train_size,
-        #     validation_size=validation_size,
-        #     batch_size=batch_size,
-        #     use_gpu=use_gpu,
-        # )
-        self.training_plan = CPATrainingPlan(self.module, self.covars_encoder, **plan_kwargs)
+        if manual_splitting:
+            data_splitter = ManualDataSplitter(
+                self.adata,
+                train_idx=self.train_idx,
+                val_idx=self.val_idx,
+                test_idx=self.test_idx,
+                batch_size=batch_size,
+                use_gpu=use_gpu,
+            )
+        else:
+            data_splitter = DataSplitter(
+                self.adata,
+                train_size=train_size,
+                validation_size=validation_size,
+                batch_size=batch_size,
+                use_gpu=use_gpu,
+            )
 
+        if self.module.variational:
+            assert 'kl_weight' in plan_kwargs.keys() and plan_kwargs.get('kl_weight') is not None
+
+        self.training_plan = CPATrainingPlan(self.module, self.covars_encoder, **plan_kwargs)
         es = "early_stopping"
         trainer_kwargs[es] = (
             early_stopping if es not in trainer_kwargs.keys() else trainer_kwargs[es]
