@@ -5,4 +5,4 @@
 import setuptools
 
 if __name__ == "__main__":
-    setuptools.setup(name="scvi-tools-skeleton")
+    setuptools.setup(name="cpa")
