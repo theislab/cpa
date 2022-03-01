@@ -5,7 +5,7 @@ profile = "black"
 skip_glob = ["docs/*", "cpa/__init__.py"]
 
 [tool.poetry]
-authors = ["Mohsen Naghipourfar <naghipourfar@berkeley.edu>", "Mohammad Lotfollahi <mohammad.lotfollahi@helmholtz-muenchen.de>"]
+authors = ["Mohsen Naghipourfar <naghipourfar@berkeley.edu>, Mohammad Lotfollahi <mohammad.lotfollahi@helmholtz-muenchen.de>"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
@@ -62,7 +62,7 @@ matplotlib = "^3.5.1"
 seaborn = "^0.11.2"
 scikit-learn = "^1.0.2"
 numpy = "^1.21.5"
-scipy = "^1.8.0"
+scipy = "^1.7.3"
 
 [tool.poetry.extras]
 dev = ["black", "pytest", "flake8", "codecov", "scanpy", "loompy", "jupyter", "nbformat", "nbconvert", "pre-commit", "isort"]
