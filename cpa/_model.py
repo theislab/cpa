@@ -467,8 +467,8 @@ class CPA(BaseModelClass):
     def save(self, dir_path: str, overwrite: bool = False, save_anndata: bool = False, **anndata_write_kwargs):
         os.makedirs(dir_path, exist_ok=True)
 
-        self.epoch_history = pd.DataFrame().from_dict(self.training_plan.epoch_history)
-        self.epoch_history.to_csv(os.path.join(dir_path, 'history.csv'), index=False)
+        # self.epoch_history = pd.DataFrame().from_dict(self.training_plan.epoch_history)
+        # self.epoch_history.to_csv(os.path.join(dir_path, 'history.csv'), index=False)
 
         return super().save(dir_path, overwrite, save_anndata, **anndata_write_kwargs)
 

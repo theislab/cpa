@@ -268,7 +268,7 @@ class CPATrainingPlan(TrainingPlan):
                 results.update({'recon_loss': reconstruction_loss.item()})
 
         else:
-            adv_results = {'adv_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0, 'penalty_drugs': 0.0}
+            adv_results = {'adv_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0, 'penalty_drugs': 0.0, 'adv_acc': 0.0}
             for covar in self.covars_encoder.keys():
                 adv_results[f'adv_{covar}'] = 0.0
                 adv_results[f'penalty_{covar}'] = 0.0
@@ -351,7 +351,7 @@ class CPATrainingPlan(TrainingPlan):
         #     for key, val in adv_results.items():
         #         adv_results[key] = val.item()
         # else:
-        adv_results = {'adv_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0, 'penalty_drugs': 0.0}
+        adv_results = {'adv_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0, 'penalty_drugs': 0.0, 'adv_acc': 0.0}
         for covar in self.covars_encoder.keys():
             adv_results[f'adv_{covar}'] = 0.0
             adv_results[f'penalty_{covar}'] = 0.0
@@ -372,7 +372,7 @@ class CPATrainingPlan(TrainingPlan):
 
     def validation_epoch_end(self, outputs):
         keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean', 'reg_var',
-                'disent_basal', 'disent_after']
+                'disent_basal', 'disent_after', 'adv_acc']
         for key in keys:
             self.epoch_history[key].append(np.mean([output[key] for output in outputs]))
 
