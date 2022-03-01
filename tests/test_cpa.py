@@ -1,11 +1,9 @@
 import anndata
 import numpy as np
 import pandas as pd
-import torch
 
 from scvi.data import setup_anndata
-from cpa import CPA
-from cpa import register_dataset
+import cpa
 
 
 def generate_synth():
@@ -20,52 +18,38 @@ def generate_synth():
             dose_val=np.array([0.1, 0.05, 0.5, 0.25, 0.75])[np.random.randint(5, size=n_cells)],
             covar_1=np.array(["v1", "v2"])[np.random.randint(2, size=n_cells)],
             covar_2=np.random.randint(10, size=n_cells),
+            control=np.random.randint(10, size=n_cells),
+            split=np.array(["train", "test", "ood"])[np.random.randint(3, size=n_cells)],
         )
     )
     obs.loc[:, "covar_1"] = obs.loc[:, "covar_1"].astype("category")
     obs.loc[:, "covar_2"] = obs.loc[:, "covar_2"].astype("category")
+    obs.loc[:, "control"] = obs.loc[:, "control"].astype("category")
+
     dataset = anndata.AnnData(
         X=X,
         obs=obs,
     )
 
-    setup_anndata(dataset)
-    drug_encoder, covars_to_ncovars = register_dataset(
+    cpa.CPA.setup_anndata(
         dataset,
         drug_key="drug_name",
         dose_key='dose_val',
-        covars_keys=["covar_1", "covar_2"],
+        categorical_covariate_keys=["covar_1", "covar_2"],
+        control_key='control'
     )
 
-    return dict(dataset=dataset, drug_encoder=drug_encoder, covars_to_ncovars=covars_to_ncovars)
+    return dict(dataset=dataset)
 
 
 def test_cpa():
     data = generate_synth()
     dataset = data["dataset"]
-    covars_to_ncovars = data["covars_to_ncovars"]
-    model = CPA(
-        adata=dataset,
-        covars_to_ncovars=covars_to_ncovars,
-        loss_ae="gauss",
-        variational=False,
-    )
-    model.train(max_epochs=3, plan_kwargs=dict(lr=1e-4))
-    model.predict()
-
-    keys = np.array(["test", "train", "ood"])
-    dataset.obs.loc[:, "split"] = keys[
-        np.random.randint(0, 3, size=(dataset.shape[0],))
-    ]
-    model = CPA(
-        adata=dataset,
-        n_latent=128,
-        covars_to_ncovars=covars_to_ncovars,
-        loss_ae="gauss",
-        doser_type='logsigm',
-        split_key="split",
-    )
-    model.train(max_epochs=3, plan_kwargs=dict(lr=1e-4))
-
-    # model.get_reconstruction_error(adata=dataset, indices=[1, 2, 3, 4])
-    # model.get_latent_representation()
+    model = cpa.CPA(adata=dataset,
+                    n_latent=128,
+                    loss_ae='gauss',
+                    doser_type='logsigm',
+                    split_key='split',
+                    )
+    model.train(max_epochs=3, plan_kwargs=dict(autoencoder_lr=1e-4))
+    model.predict(batch_size=1024)
