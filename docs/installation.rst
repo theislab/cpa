@@ -4,7 +4,7 @@ Installation
 Prerequisites
 ~~~~~~~~~~~~~~
 
-my_package can be installed via PyPI.
+CPA can be installed via PyPI.
 
 conda prerequisites
 ###################
@@ -30,18 +30,18 @@ pip prerequisites:
 .. _Python: https://www.python.org/downloads/
 .. _PyTorch: http://pytorch.org
 
-my_package installation
+CPA installation
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 Install my_package in one of the following ways:
 
 Through **pip**::
 
-    pip install <my_package>
+    pip install compert
 
 Through pip with packages to run notebooks. This installs scanpy, etc.::
 
-    pip install <my_package>[tutorials]
+    pip install compert[tutorials]
 
 Nightly version - clone this repo and run::
 
