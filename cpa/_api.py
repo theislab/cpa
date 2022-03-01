@@ -32,6 +32,8 @@ class ComPertAPI:
         self.perturbation_key = _CE_CONSTANTS.DRUG_KEY
         self.dose_key = _CE_CONSTANTS.DOSE_KEY
         self.covars_key = _CE_CONSTANTS.COVARS_KEYS
+        self.control_key = _CE_CONSTANTS.CONTROL_KEY
+
         self.min_dose = adata.obs[_CE_CONSTANTS.DOSE_KEY].min().item()
         self.max_dose = adata.obs[_CE_CONSTANTS.DOSE_KEY].max().item()
 
@@ -445,6 +447,7 @@ class ComPertAPI:
             feed_adata = AnnData(X=genes,
                                  obs={self.perturbation_key: [comb_name] * num,
                                       self.dose_key: [dose_name] * num,
+                                      self.control_key: [0] * num,
                                       })
 
             for idx, covar in enumerate(covars_name):

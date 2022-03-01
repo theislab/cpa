@@ -417,6 +417,9 @@ class CPA(BaseModelClass):
         pred_adata_mean.obs_names = adata.obs_names
         pred_adata_var.obs_names = adata.obs_names
 
+        pred_adata_mean.var_names = adata.var_names
+        pred_adata_var.var_names = adata.var_names
+
         return pred_adata_mean, pred_adata_var
 
     @torch.no_grad()

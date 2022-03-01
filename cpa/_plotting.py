@@ -11,6 +11,10 @@ from adjustText import adjust_text
 from sklearn.decomposition import KernelPCA
 from sklearn.metrics.pairwise import cosine_similarity
 
+from scipy import stats, sparse
+from sklearn.metrics import r2_score
+
+
 from ._api import ComPertAPI
 
 FONT_SIZE = 13
@@ -1064,9 +1068,6 @@ def plot_similarity(
         save_to_file(sns_plot, file_name, file_format)
 
 
-from scipy import stats, sparse
-from sklearn.metrics import r2_score
-
 
 def mean_plot(
         adata,
@@ -1168,7 +1169,13 @@ def mean_plot(
         m, b, pearson_r, p_value, std_err = stats.linregress(y, x)
         r2 = pearson_r ** 2
     if verbose:
-        print('All genes var: ', r2)
+        if isinstance(real.X, np.ndarray):
+            y_var = np.var(real.X, axis=0)
+        else:
+            y_var = np.var(real.X.toarray(), axis=0)
+        x_var = np.var(pred.X, axis=0)
+        r2_var = r2_score(y_var, x_var)
+        print('All genes var: ', r2_var)
     df = pd.DataFrame({f'{exp_key}_true': x, f'{exp_key}_pred': y})
 
     plt.figure(figsize=figsize)
