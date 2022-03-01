@@ -12,23 +12,26 @@ classifiers = [
   "Natural Language :: English",
   "Programming Language :: Python :: 3.6",
   "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
   "Operating System :: MacOS :: MacOS X",
   "Operating System :: Microsoft :: Windows",
   "Operating System :: POSIX :: Linux",
   "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
-description = "Casual Compositional Perturbation Autoencoder (CCPA)"
-documentation = ""
-homepage = "https://github.com/M0hammadL/casual_cpa/"
+description = "Compositional Perturbation Autoencoder (CPA)"
+documentation = "https://cpa-tools.readthedocs.io"
+homepage = "https://github.com/theislab/cpa/"
 license = "BSD-3-Clause"
-name = "cpa"
+name = "cpa-tools"
 packages = [
-  {include = ""},
+  {include = "cpa"},
 ]
 readme = "README.md"
 version = "0.1.0"
 
 [tool.poetry.dependencies]
+adjustText = "*"
 anndata = ">=0.7.5"
 black = {version = ">=20.8b1", optional = true}
 codecov = {version = ">=2.0.8", optional = true}
