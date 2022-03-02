@@ -5,12 +5,12 @@ from typing import Optional, Sequence, Union, List
 import numpy as np
 import pandas as pd
 import torch
+from scvi.data import setup_anndata, register_tensor_from_anndata
 from scvi.dataloaders import DataSplitter
 from sklearn.preprocessing import OneHotEncoder
 from torch.nn import functional as F
 
 from anndata import AnnData
-from scvi.data import setup_anndata, register_tensor_from_anndata
 from scvi.model.base import BaseModelClass
 from scvi.train import TrainRunner
 from scvi.train._callbacks import SaveBestState
