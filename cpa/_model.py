@@ -5,6 +5,7 @@ from typing import Optional, Sequence, Union, List
 import numpy as np
 import pandas as pd
 import torch
+from pytorch_lightning.callbacks import EarlyStopping
 from scvi.data import setup_anndata, register_tensor_from_anndata
 from scvi.dataloaders import DataSplitter
 from sklearn.preprocessing import OneHotEncoder
@@ -288,10 +289,7 @@ class CPA(BaseModelClass):
             assert 'kl_weight' in plan_kwargs.keys() and plan_kwargs.get('kl_weight') is not None
 
         self.training_plan = CPATrainingPlan(self.module, self.covars_encoder, **plan_kwargs)
-        es = "early_stopping"
-        trainer_kwargs[es] = (
-            early_stopping if es not in trainer_kwargs.keys() else trainer_kwargs[es]
-        )
+        trainer_kwargs["early_stopping"] = False
         trainer_kwargs.update({'weights_summary': 'top'})
         trainer_kwargs['check_val_every_n_epoch'] = trainer_kwargs.get('check_val_every_n_epoch', 20)
         trainer_kwargs['callbacks'] = []
@@ -311,6 +309,8 @@ class CPA(BaseModelClass):
             trainer_kwargs.update({'callbacks': [hyperopt_callback], 'logger': tensorboard_logger})
 
         else:
+            es_callback = EarlyStopping(monitor='cpa_metric', patience=trainer_kwargs['early_stopping_patience'])
+            trainer_kwargs['callbacks'].append(es_callback)
             if save_path is not None:
                 os.makedirs(os.path.join(save_path, 'checkpoints/'), exist_ok=True)
                 checkpoint = SaveBestState(monitor='cpa_metric', mode='max', period=20, verbose=True)
