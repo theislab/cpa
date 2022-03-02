@@ -81,9 +81,9 @@ intersphinx_mapping = dict(
 )
 
 # General information about the project.
-project = u"mypackage"
-copyright = u"2021, Yosef Lab, UC Berkeley"
-author = u"Adam Gayoso"
+project = u"cpa-tools"
+copyright = u"2022, TheisLab"
+author = u"Mohsen Naghipourfar"
 
 # The version info for the project you're documenting, acts as replacement
 # for |version| and |release|, also used in various other places throughout

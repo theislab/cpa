@@ -37,11 +37,11 @@ Install my_package in one of the following ways:
 
 Through **pip**::
 
-    pip install compert
+    pip install cpa-tools
 
 Through pip with packages to run notebooks. This installs scanpy, etc.::
 
-    pip install compert[tutorials]
+    pip install cpa-tools[tutorials]
 
 Nightly version - clone this repo and run::
 
