@@ -1275,7 +1275,7 @@ def plot_history(model: CPA):
         valid_df = df[df['mode'] == 'valid']
         ax[i].plot(train_df['epoch'].values, train_df[df.columns[i + 2]].values, label='train')
         ax[i].plot(valid_df['epoch'].values, valid_df[df.columns[i + 2]].values, label='valid')
-        ax[i].set_title(df.columns[i], fontweight="bold")
+        ax[i].set_title(df.columns[i + 2], fontweight="bold")
 
         if i == n_metrics - 1:
             handles, labels = ax[i].get_legend_handles_labels()
