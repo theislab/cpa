@@ -98,82 +98,6 @@ class CPATrainingPlan(TrainingPlan):
             self.epoch_history[f'adv_{covar}'] = []
             self.epoch_history[f'penalty_{covar}'] = []
 
-        # Adversarial modules and hparams
-        # self.covariates_adv_nn = nn.ModuleDict(
-        #     {
-        #         key: FCLayers(
-        #             n_in=module.n_latent, n_out=n_cats, **adversarial_models_kwargs
-        #         )
-        #         for key, n_cats in module.cat_to_ncats.items()
-        #     }
-        # )
-        # self.treatments_adv_nn = FCLayers(
-        #     n_in=module.n_latent, n_out=module.n_treatments, **adversarial_models_kwargs
-        # )
-        # self.adv_loss_covariates = nn.CrossEntropyLoss()
-        # self.adv_loss_treatments = nn.BCEWithLogitsLoss()
-
-    # def _adversarial_classifications(self, z_basal):
-    #     """Computes adversarial classifier predictions
-
-    #     Parameters
-    #     ----------
-    #     z_basal : tensor
-    #         Basal states
-    #     """
-    #     pred_treatments = self.treatments_adv_nn(z_basal)
-    #     pred_covariates = dict()
-    #     for cat_cov_name in self.module.cat_to_ncats:
-    #         pred_covariates[cat_cov_name] = self.covariates_adv_nn[cat_cov_name](
-    #             z_basal
-    #         )
-    #     return pred_treatments, pred_covariates
-
-    # def adversarial_losses(self, tensors, inference_outputs, generative_outputs):
-    #     """Computes adversarial classification losses and regularizations"""
-    #     z_basal = inference_outputs["z_basal"]
-    #     treatments = tensors["treatments"]
-    #     c_dict = inference_outputs["c_dict"]
-    #     pred_treatments, pred_covariates = self._adversarial_classifications(z_basal)
-
-    #     # Classification losses
-    #     adv_cats_loss = 0.0
-    #     for cat_cov_name in self.module.cat_to_ncats:
-    #         adv_cats_loss += self.adv_loss_covariates(
-    #             pred_covariates[cat_cov_name],
-    #             c_dict[cat_cov_name].long().squeeze(-1),
-    #         )
-    #     adv_t_loss = self.adv_loss_treatments(pred_treatments, (treatments > 0).float())
-    #     adv_loss = adv_t_loss + adv_cats_loss
-
-    #     # Penalty losses
-    #     adv_penalty_cats = 0.0
-    #     for cat_cov_name in self.module.cat_to_ncats:
-    #         cat_penalty = (
-    #             torch.autograd.grad(
-    #                 pred_covariates[cat_cov_name].sum(), z_basal, create_graph=True
-    #             )[0]
-    #             .pow(2)
-    #             .mean()
-    #         )
-    #         adv_penalty_cats += cat_penalty
-
-    #     adv_penalty_treatments = (
-    #         torch.autograd.grad(
-    #             pred_treatments.sum(),
-    #             z_basal,
-    #             create_graph=True,
-    #         )[0]
-    #         .pow(2)
-    #         .mean()
-    #     )
-    #     adv_penalty = adv_penalty_cats + adv_penalty_treatments
-
-    #     return dict(
-    #         adv_loss=adv_loss,
-    #         adv_penalty=adv_penalty,
-    #     )
-
     def configure_optimizers(self):
         optimizer_autoencoder = torch.optim.Adam(
             list(self.module.encoder.parameters()) +
@@ -193,23 +117,6 @@ class CPATrainingPlan(TrainingPlan):
             self.module.drug_network.dosers.parameters(),
             lr=self.dosers_lr,
             weight_decay=self.dosers_wd)
-
-        # params1 = filter(lambda p: p.requires_grad, self.module.parameters())
-        # optimizer1 = torch.optim.Adam(
-        #     params1, lr=self.lr, eps=self.autoencoder_wd, weight_decay=self.weight_decay
-        # )
-        # params2 = filter(
-        #     lambda p: p.requires_grad,
-        #     list(self.covariates_adv_nn.parameters())
-        #     + list(self.treatments_adv_nn.parameters()),
-        # )
-        # optimizer2 = torch.optim.Adam(
-        #     params2,
-        #     lr=self.adversary_lr,
-        #     eps=self.adversary_wd,
-        #     weight_decay=self.weight_decay,
-        # )
-        # optims = [optimizer1, optimizer2]
 
         optimizers = [optimizer_autoencoder, optimizer_adversaries, optimizer_dosers]
         if self.step_size_lr is not None:
@@ -390,9 +297,3 @@ class CPATrainingPlan(TrainingPlan):
         self.log('val_disnt_basal', self.epoch_history['disent_basal'][-1], prog_bar=True)
         self.log('val_disnt_after', self.epoch_history['disent_after'][-1], prog_bar=True)
         # self.log('val_reg_var', self.epoch_history['reg_var'][-1], prog_bar=True)
-
-    # def on_validation_epoch_start(self) -> None:
-    #     torch.set_grad_enabled(True)
-
-    # def on_validation_epoch_end(self) -> None:
-    #     self.zero_grad()

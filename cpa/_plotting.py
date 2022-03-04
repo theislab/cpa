@@ -14,7 +14,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from scipy import stats, sparse
 from sklearn.metrics import r2_score
 
-
+from . import CPA
 from ._api import ComPertAPI
 
 FONT_SIZE = 13
@@ -27,7 +27,7 @@ matplotlib.rc('xtick', labelsize=FONT_SIZE)
 
 class CompertVisuals:
     """
-    A wrapper for automatic plotting CompPert latent embeddings and dose-response
+    A wrapper for automatic plotting CompPert latent drug and dose-response
     curve. Sets up prefix for all files and default dictionaries for atomic
     perturbations and cell types.
     """
@@ -45,14 +45,14 @@ class CompertVisuals:
         moc : CompPertAPI
             Variable from ComPertAPI class.
         fileprefix : str, optional (default: None)
-            Prefix (with path) to the filename to save all embeddings in a
-            standartized manner. If None, embeddings are not saved to file.
+            Prefix (with path) to the filename to save all drug in a
+            standartized manner. If None, drug are not saved to file.
         perts_palette : dict (default: None)
-            Dictionary of colors for the embeddings of perturbations. Keys
+            Dictionary of colors for the drug of perturbations. Keys
             correspond to perturbations and values to their colors. If None,
             default dicitonary will be set up.
         сovars_palette : dict (default: None)
-            Dictionary of colors for the embeddings of covariates. Keys
+            Dictionary of colors for the drug of covariates. Keys
             correspond to covariates and values to their colors. If None,
             default dicitonary will be set up.
         """
@@ -111,7 +111,7 @@ class CompertVisuals:
             If embedding of kind not perturbations or covariates, the user can
             specify color dictionary for the embedding.
         labels : list, optional (default: None)
-            Labels for the embeddings.
+            Labels for the drug.
         dimred : str, optional (default: 'KernelPCA')
             Dimensionality reduction method for plotting low dimensional
             representations. Options: 'KernelPCA', 'UMAPpre', 'UMAPcos', None.
@@ -447,7 +447,7 @@ def get_palette(
 
 def fast_dimred(emb, method='KernelPCA'):
     """
-    Takes high dimensional embeddings and produces a 2-dimensional representation
+    Takes high dimensional drug and produces a 2-dimensional representation
     for plotting.
     emb: np.array
         Embeddings matrix.
@@ -1068,7 +1068,6 @@ def plot_similarity(
         save_to_file(sns_plot, file_name, file_format)
 
 
-
 def mean_plot(
         adata,
         pred,
@@ -1267,146 +1266,17 @@ def plot_r2_matrix(pred, adata, de_genes=None, **kwds):
         plt.show()
 
 
-def arrange_history(history):
-    print(history.keys())
+def plot_history(model: CPA):
+    df = model.epoch_history
+    n_metrics = len(df.columns) - 2
+    fig, ax = plt.subplots(1, n_metrics, sharex=True, sharey=False, figsize=(24, 2.))
+    for i in range(n_metrics):
+        train_df = df[df['mode'] == 'train']
+        valid_df = df[df['mode'] == 'valid']
+        ax[i].plot(train_df['epoch'].values, train_df[df.columns[i + 2]].values, label='train')
+        ax[i].plot(valid_df['epoch'].values, valid_df[df.columns[i + 2]].values, label='valid')
+        ax[i].set_title(df.columns[i], fontweight="bold")
 
-
-class ComPertHistory:
-    """
-    A wrapper for automatic plotting history of ComPert model..
-    """
-
-    def __init__(self,
-                 history,
-                 fileprefix=None
-                 ):
-        """
-        Parameters
-        ----------
-        history : dict
-            Dictionary of ComPert history.
-        fileprefix : str, optional (default: None)
-            Prefix (with path) to the filename to save all embeddings in a
-            standartized manner. If None, embeddings are not saved to file.
-        """
-
-        self.time = history['elapsed_time_min']
-        self.losses_list = ['loss_reconstruction', 'loss_adv_drugs', \
-                            'loss_adv_cell_types']
-        self.penalties_list = ['penalty_adv_drugs', 'penalty_adv_cell_types']
-
-        subset_keys = ['epoch'] + self.losses_list + self.penalties_list
-
-        self.losses = pd.DataFrame(dict((k, history[k]) for k in \
-                                        subset_keys if k in history))
-
-        self.header = ['mean', 'mean_DE', 'var', 'var_DE']
-
-        self.metrics = pd.DataFrame(columns=['epoch', 'split'] + self.header)
-        for split in ['training', 'test', 'ood']:
-            df_split = pd.DataFrame(np.array(history[split]), columns=self.header)
-            df_split['split'] = split
-            df_split['epoch'] = history['stats_epoch']
-            self.metrics = pd.concat([self.metrics, df_split])
-
-        self.disent = pd.DataFrame(dict((k, history[k]) \
-                                        for k in ['perturbation disentanglement', \
-                                                  'covariate disentanglement'] if k in \
-                                        history))
-        self.disent['epoch'] = history['stats_epoch']
-
-        self.fileprefix = fileprefix
-
-    def print_time(self):
-        print(f"Computation time: {self.time:.0f} min")
-
-    def plot_losses(self, filename=None):
-        """
-        Parameters
-        ----------
-        filename : str (default: None)
-            Name of the file to save the plot. If None, will automatically
-            generate name from prefix file.
-        """
-        if filename is None:
-            if self.fileprefix is None:
-                filename = None
-            else:
-                filename = f'{self.fileprefix}_history_losses.png'
-
-        fig, ax = plt.subplots(1, 4, sharex=True, sharey=False, figsize=(12, 2.))
-
-        i = 0
-        for i in range(4):
-            if i < 3:
-                ax[i].plot(self.losses['epoch'].values, \
-                           self.losses[self.losses_list[i]].values)
-                ax[i].set_title(self.losses_list[i], fontweight="bold")
-            else:
-                ax[i].plot(self.losses['epoch'].values, \
-                           self.losses[self.penalties_list].values)
-                ax[i].set_title('Penalties', fontweight="bold")
-        plt.tight_layout()
-
-        if filename:
-            save_to_file(fig, filename)
-
-    def plot_metrics(self, epoch_min=0, filename=None):
-        """
-        Parameters
-        ----------
-        epoch_min : int (default: 0)
-            Epoch from which to show metrics history plot. Done for readability.
-
-        filename : str (default: None)
-            Name of the file to save the plot. If None, will automatically
-            generate name from prefix file.
-        """
-        if filename is None:
-            if self.fileprefix is None:
-                filename = None
-            else:
-                filename = f'{self.fileprefix}_history_metrics.png'
-
-        df = self.metrics.melt(id_vars=["epoch", "split"])
-        col_dict = dict(zip(['training', 'test', 'ood'], \
-                            ['#377eb8', '#4daf4a', '#e41a1c']))
-        fig, axs = plt.subplots(3, 2, sharex=True, sharey=False, figsize=(7, 7.))
-        ax = plt.gca()
-        i = 0
-        for i1 in range(2):
-            for i2 in range(2):
-                sns.lineplot(
-                    data=df[(df['variable'] == self.header[i]) & \
-                            (df['epoch'] > epoch_min)],
-                    x="epoch",
-                    y="value",
-                    palette=col_dict,
-                    hue="split",
-                    ax=axs[i1, i2]
-                )
-                axs[i1, i2].set_title(self.header[i], fontweight="bold")
-                i += 1
-
-        sns.lineplot(
-            data=self.disent[self.disent['epoch'] > epoch_min],
-            x="epoch",
-            y="perturbation disentanglement",
-            legend=False,
-            ax=axs[2, 0]
-        )
-        axs[2, 0].set_title("perturbation disentanglement", fontweight="bold")
-
-        sns.lineplot(
-            data=self.disent[self.disent['epoch'] > epoch_min],
-            x="epoch",
-            y="covariate disentanglement",
-            legend=False,
-            ax=axs[2, 1]
-        )
-        axs[2, 1].set_title("covariate disentanglement", fontweight="bold")
-
-        plt.tight_layout()
-
-        if filename:
-            save_to_file(fig, filename)
+        if i == n_metrics - 1:
+            handles, labels = ax[i].get_legend_handles_labels()
+            fig.legend(handles, ['train', 'valid'], loc='right')

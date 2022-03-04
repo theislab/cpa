@@ -34,8 +34,8 @@ class ComPertAPI:
         self.covars_key = _CE_CONSTANTS.COVARS_KEYS
         self.control_key = _CE_CONSTANTS.CONTROL_KEY
 
-        self.min_dose = adata.obs[_CE_CONSTANTS.DOSE_KEY].min().item()
-        self.max_dose = adata.obs[_CE_CONSTANTS.DOSE_KEY].max().item()
+        self.min_dose = adata.obs[_CE_CONSTANTS.DOSE_KEY].min()
+        self.max_dose = adata.obs[_CE_CONSTANTS.DOSE_KEY].max()
 
         self.model = model
         self.adata = adata
@@ -185,7 +185,7 @@ class ComPertAPI:
         Returns
         -------
         If return_anndata is True, returns anndata structure of the combinations,
-        otherwise returns a np.array of corresponding embeddings.
+        otherwise returns a np.array of corresponding drug.
         """
 
         drug_mix = np.zeros([len(drugs_list), self.num_drugs])

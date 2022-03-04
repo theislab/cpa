@@ -33,7 +33,7 @@ class CPA(BaseModelClass):
             Registered Annotation Dataset
 
         n_latent: int
-            Number of latent dimensions used for embeddings and Autoencoder
+            Number of latent dimensions used for drug and Autoencoder
 
         loss_ae: str
             Either `gauss` or `NB`. Autoencoder loss function.
@@ -424,7 +424,7 @@ class CPA(BaseModelClass):
 
     @torch.no_grad()
     def get_drug_embeddings(self, doses=1.0, drug: Optional[str] = None):
-        """Computes all drug embeddings
+        """Computes all drug drug
 
         Parameters
         ----------
@@ -449,7 +449,7 @@ class CPA(BaseModelClass):
 
     @torch.no_grad()
     def get_covar_embeddings(self, covariate: str, covariate_value: str = None):
-        """Computes Covariate embeddings
+        """Computes Covariate drug
 
         Parameters
         ----------
@@ -470,8 +470,9 @@ class CPA(BaseModelClass):
     def save(self, dir_path: str, overwrite: bool = False, save_anndata: bool = False, **anndata_write_kwargs):
         os.makedirs(dir_path, exist_ok=True)
 
-        # self.epoch_history = pd.DataFrame().from_dict(self.training_plan.epoch_history)
-        # self.epoch_history.to_csv(os.path.join(dir_path, 'history.csv'), index=False)
+        if isinstance(self.training_plan.epoch_history, dict):
+            self.epoch_history = pd.DataFrame().from_dict(self.training_plan.epoch_history)
+            self.epoch_history.to_csv(os.path.join(dir_path, 'history.csv'), index=False)
 
         return super().save(dir_path, overwrite, save_anndata, **anndata_write_kwargs)
 
@@ -482,6 +483,6 @@ class CPA(BaseModelClass):
         try:
             model.epoch_history = pd.read_csv(os.path.join(dir_path, 'history.csv'))
         except:
-            print('WARNING: The history was not found. Maybe the model has not been trained on any dataset.')
+            print('WARNING: The history was not found.')
 
         return model
