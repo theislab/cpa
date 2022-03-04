@@ -279,6 +279,7 @@ class CompertVisuals:
                               filename=None,
                               logdose=False,
                               fontsize=None,
+                              legend=True,
                               measured_points=None,
                               bbox=(1.35, 1.),
                               figsize=(7., 4.)
@@ -354,6 +355,7 @@ class CompertVisuals:
                            logscale=measured_points,
                            measured_points=measured_points,
                            bbox=bbox,
+                           legend=legend,
                            fontsize=fontsize,
                            format='png')
 
@@ -484,6 +486,7 @@ def plot_dose_response(df,
                        f1=7,
                        f2=3.,
                        bbox=(1.35, 1.),
+                       legend=True,
                        ref_name='origin',
                        title_name='None',
                        plot_vertical=True,
@@ -577,7 +580,8 @@ def plot_dose_response(df,
             palette={'train': '#000000', 'training': '#000000', 'ood': '#e41a1c'},
             data=df_ref, ax=ax)
 
-        # ax.legend_.remove()
+        if legend:
+            ax.legend_.remove()
     else:
         sns.lineplot(x=contvar_key, y=response_name,
                      palette=col_dict,
