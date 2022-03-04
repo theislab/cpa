@@ -378,7 +378,7 @@ class ComPertAPI:
         if self.comb_emb is None:
             self.compute_comb_emb(thrh=30)
 
-        drug_emb = self.model.get_drug_embeddings(doses=1.0, drug=pert)
+        drug_emb = self.model.get_drug_embeddings(doses=dose, drug=pert)
         cond_emb = drug_emb
         for cov in covs:
             for cov_col, cov_col_values in self.unique_covars.items():
@@ -514,7 +514,6 @@ class ComPertAPI:
 
     def get_response(
             self,
-            datasets,
             doses=None,
             contvar_min=None,
             contvar_max=None,
@@ -559,57 +558,60 @@ class ComPertAPI:
         if perturbations is None:
             perturbations = self.unique_perts
 
-        response = pd.DataFrame(columns=[self.covars_key,
+        response = pd.DataFrame(columns=[*self.covars_key,
                                          self.perturbation_key,
                                          self.dose_key,
                                          'response'] + list(self.var_names))
 
+        split, control_value = control_name.split("_")
+
         i = 0
-        for ict, ct in enumerate(self.unique_covars):
-            genes_control = self.adatas[control_name].genes[datasets[control_name].cell_types_names == \
-                                             ct].clone().detach()
+        for ict, ct in enumerate(self.unique_covars['cell_type']):
+            genes_control = self.adatas[split][
+                self.adatas[split].obs[self.control_key] == 1 if control_value == 'control' else 0]
+            genes_control = genes_control[genes_control.obs[self.covars_key[0]] == ct]
+
             if len(genes_control) < 1:
                 print('Warning! Not enought control cells for this covariate.\
                     Taking control cells from all covariates.')
-                genes_control = datasets[control_name].genes
 
+                # genes_control = datasets[control_name].genes
             if ncells_max < len(genes_control):
                 ncells_max = min(ncells_max, len(genes_control))
-                idx = torch.LongTensor(np.random.choice(range(len(genes_control)), \
-                                                        ncells_max, replace=False))
+
+                idx = np.random.choice(range(len(genes_control)), ncells_max, replace=False)
                 genes_control = genes_control[idx]
 
-            num, dim = genes_control.size(0), genes_control.size(1)
-            control_avg = genes_control.mean(dim=0).cpu().clone().detach().numpy().reshape(-1)
+            num, dim = genes_control.shape[0], genes_control.shape[1]
+            if not isinstance(genes_control.X, np.ndarray):
+                control_avg = genes_control.X.toarray().mean(axis=0).reshape(-1)
+            else:
+                control_avg = genes_control.X.mean(axis=0).reshape(-1)
 
             for idr, drug in enumerate(perturbations):
-                if not (drug in datasets[control_name].ctrl_name):
-                    for dose in doses:
-                        df = pd.DataFrame(data={self.covars_key: [ct],
-                                                self.perturbation_key: [drug], self.dose_key: [dose]})
+                # if not (drug in genes_control.obs[self.perturbation_key].unique()):
+                for dose in doses:
+                    df = pd.DataFrame(data={self.covars_key[0]: [ct],
+                                            self.perturbation_key: [drug],
+                                            self.dose_key: [dose]})
 
-                        gene_means, _, _ = \
-                            self.predict(genes_control.cpu().detach().numpy(), \
-                                         df, return_anndata=False)
-                        predicted_data = np.mean(gene_means, axis=0).reshape(-1)
+                    gene_means_adata = self.predict(genes_control.X, df)
+                    predicted_data = np.mean(gene_means_adata.X, axis=0).reshape(-1)
 
-                        response.loc[i] = [ct, drug, dose,
-                                           np.linalg.norm(predicted_data - control_avg)] + \
-                                          list(predicted_data - control_avg)
-                        i += 1
+                    response.loc[i] = [ct, drug, dose,
+                                       np.linalg.norm(predicted_data - control_avg)] + \
+                                      list(predicted_data - control_avg)
+                    i += 1
         return response
 
     def get_response_reference(
             self,
             perturbations=None
     ):
-
         """Computes reference values of the response.
 
         Parameters
         ----------
-        dataset : CompPertDataset
-            The file location of the spreadsheet
         perturbations : list (default: None)
             List of perturbations for dose response
 
@@ -621,7 +623,7 @@ class ComPertAPI:
         if perturbations is None:
             perturbations = self.unique_perts
 
-        reference_response_curve = pd.DataFrame(columns=[self.covars_key,
+        reference_response_curve = pd.DataFrame(columns=[*self.covars_key,
                                                          self.perturbation_key,
                                                          self.dose_key,
                                                          'split',
@@ -629,11 +631,15 @@ class ComPertAPI:
                                                          'response'] + \
                                                         list(self.var_names))
 
-        dataset_ctr = self.adatas['train'][self.adatas['train'].obs[self.perturbation_key] == 'control']
-        dataset_trt = self.adatas['train'][self.adatas['train'].obs[self.perturbation_key] != 'control']
+        dataset_ctr = self.adatas['train'][self.adatas['train'].obs[self.control_key] == 1]
+        dataset_trt = self.adatas['train'][self.adatas['train'].obs[self.control_key] == 0]
 
         self.adatas['training_control'] = dataset_ctr
         self.adatas['training_treated'] = dataset_trt
+        self.seen_covars_perts['training_control'] = np.unique(
+            self.adatas['training_control'].obs[self.pert_categories_key])
+        self.seen_covars_perts['training_treated'] = np.unique(
+            self.adatas['training_treated'].obs[self.pert_categories_key])
 
         i = 0
         for split in ['training_treated', 'ood']:
@@ -646,7 +652,8 @@ class ComPertAPI:
                     else:
                         dose = dose_val
 
-                    genes_control = dataset_ctr[dataset_ctr.obs['cell_type'] == ct].X
+                    genes_control = dataset_ctr[dataset_ctr.obs[self.covars_key[0]] == ct].X
+
                     if not isinstance(genes_control, np.ndarray):
                         genes_control = genes_control.toarray()
                     if len(genes_control) < 1:
@@ -654,18 +661,22 @@ class ComPertAPI:
                             Taking control cells from all covariates.')
                         genes_control = dataset_ctr.X
 
-                    num, dim = genes_control.size(0), genes_control.size(1)
-                    control_avg = \
-                        genes_control.mean(dim=0).cpu().clone().detach().numpy().reshape(-1)
+                    num, dim = genes_control.shape[0], genes_control.shape[1]
+                    control_avg = genes_control.mean(axis=0).reshape(-1)
 
                     idx = np.where((dataset.obs[self.pert_categories_key] == pert))[0]
 
                     if len(idx):
-                        y_true = dataset.X[idx, :].numpy().mean(axis=0)
-                        reference_response_curve.loc[i] = [ct, drug,
-                                                           dose, split, len(idx),
-                                                           np.linalg.norm(y_true - control_avg)] + \
-                                                          list(y_true - control_avg)
+                        if not isinstance(dataset.X, np.ndarray):
+                            y_true = dataset.X.toarray()[idx, :].mean(axis=0)
+                        else:
+                            y_true = dataset.X[idx, :].mean(axis=0)
+
+                        new_row = [ct, drug,
+                                   dose, split, len(idx),
+                                   np.linalg.norm(y_true - control_avg)] \
+                                  + list(y_true - control_avg)
+                        reference_response_curve.loc[i] = new_row
 
                         i += 1
 
@@ -673,7 +684,6 @@ class ComPertAPI:
 
     def get_response2D(
             self,
-            datasets,
             perturbations,
             covar,
             doses=None,
@@ -688,8 +698,6 @@ class ComPertAPI:
 
         Parameters
         ----------
-        dataset : CompPertDataset
-            The file location of the spreadsheet
         perturbations : list
             List of length 2 of perturbations for dose response.
         covar : str
@@ -722,24 +730,21 @@ class ComPertAPI:
         if doses is None:
             doses = np.linspace(contvar_min, contvar_max, n_points)
 
-        # genes_control = dataset.genes[dataset.indices['control']]
-        genes_control = \
-            datasets['test_control'].genes[datasets['test_control'].cell_types_names == \
-                                           covar].clone().detach()
+        test_control_adata = self.adatas['test'][self.adatas['test'].obs[self.control_key] == 1]
+        genes_control = test_control_adata[test_control_adata.obs[self.covars_key[0]] == covar]
+
         if len(genes_control) < 1:
             print('Warning! Not enought control cells for this covariate. \
                 Taking control cells from all covariates.')
-            genes_control = datasets['test_control'].genes
 
         ncells_max = min(ncells_max, len(genes_control))
-        idx = torch.LongTensor(np.random.choice(range(len(genes_control)), ncells_max))
+        idx = np.random.choice(range(len(genes_control)), ncells_max)
         genes_control = genes_control[idx]
 
-        num, dim = genes_control.size(0), genes_control.size(1)
-        control_avg = genes_control.mean(dim=0).cpu().clone().detach().numpy().reshape(-1)
+        num, dim = genes_control.shape[0], genes_control.shape[1]
+        control_avg = genes_control.X.mean(0).reshape(-1)
 
-        response = pd.DataFrame(columns=perturbations + ['response'] + \
-                                        list(self.var_names))
+        response = pd.DataFrame(columns=perturbations + ['response'] + list(self.var_names))
 
         drug = perturbations[0] + '+' + perturbations[1]
 
@@ -749,15 +754,13 @@ class ComPertAPI:
         i = 0
         if not (drug in ['Vehicle', 'EGF', 'unst', 'control', 'ctrl']):
             for dose in dose_vals:
-                df = pd.DataFrame(data={self.covars_key: [covar],
-                                        self.perturbation_key: [drug + fixed_drugs],
-                                        self.dose_key: [dose + fixed_doses]})
+                df = pd.DataFrame(data={self.perturbation_key: [drug + fixed_drugs],
+                                        self.dose_key: [dose + fixed_doses],
+                                        self.covars_key[0]: [covar]})
 
-                gene_means, _, _ = self.predict(
-                    genes_control.cpu().detach().numpy(), df,
-                    return_anndata=False)
+                gene_means_adata = self.predict(genes_control.X, df)
 
-                predicted_data = np.mean(gene_means, axis=0).reshape(-1)
+                predicted_data = np.mean(gene_means_adata.X, axis=0).reshape(-1)
 
                 response.loc[i] = dose_comb[i] + \
                                   [np.linalg.norm(control_avg - predicted_data)] + \

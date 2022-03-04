@@ -274,6 +274,7 @@ class CompertVisuals:
                               palette=None,
                               title_name=None,
                               postfix='',
+                              ref_name='origin',
                               xlabelname=None,
                               filename=None,
                               logdose=False,
@@ -341,6 +342,7 @@ class CompertVisuals:
                            var_name,
                            xlabelname=xlabelname,
                            df_ref=df_ref,
+                           ref_name=ref_name,
                            response_name=response_name,
                            title_name=title_name,
                            use_ref_response=(not (df_ref is None)),
@@ -562,7 +564,7 @@ def plot_dose_response(df,
             dashes=[(1, 0), (2, 1)],
             legend='full',
             style_order=['predictions', 'observations'],
-            data=df_plt, ax=ax)
+            data=df_plt.reset_index(drop=True), ax=ax)
 
         df_ref = df_ref.replace('training_treated', 'train')
         sns.scatterplot(
@@ -575,7 +577,7 @@ def plot_dose_response(df,
             palette={'train': '#000000', 'training': '#000000', 'ood': '#e41a1c'},
             data=df_ref, ax=ax)
 
-        ax.legend_.remove()
+        # ax.legend_.remove()
     else:
         sns.lineplot(x=contvar_key, y=response_name,
                      palette=col_dict,
@@ -607,14 +609,15 @@ def plot_dose_response(df,
     if not (df_ref is None):
         atomic_drugs = np.unique(df_ref[perturbation_key].values)
         for drug in atomic_drugs:
-            x = df_ref[df_ref[perturbation_key] == drug][contvar_key].values
-            m1 = np.min(df[df[perturbation_key] == drug][response_name].values)
-            m2 = np.max(df[df[perturbation_key] == drug][response_name].values)
+            if drug in df[perturbation_key].unique():
+                x = df_ref[df_ref[perturbation_key] == drug][contvar_key].values
+                m1 = np.min(df[df[perturbation_key] == drug][response_name].values)
+                m2 = np.max(df[df[perturbation_key] == drug][response_name].values)
 
-            if plot_vertical:
-                for x_dot in x:
-                    ax.plot([x_dot, x_dot], [m1, m2], ':', color='black',
-                            linewidth=.5, alpha=0.5)
+                if plot_vertical:
+                    for x_dot in x:
+                        ax.plot([x_dot, x_dot], [m1, m2], ':', color='black',
+                                linewidth=.5, alpha=0.5)
 
     fig.tight_layout()
     if fname:
@@ -825,7 +828,7 @@ def plot_uncertainty_dose(
             {
                 'cell_type': cov,
                 'condition': pert,
-                'dose_val': repr(i),
+                'dose_val': i,
             }
         )
     df_pred = pd.DataFrame(df_list)
