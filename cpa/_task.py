@@ -100,21 +100,21 @@ class CPATrainingPlan(TrainingPlan):
 
     def configure_optimizers(self):
         optimizer_autoencoder = torch.optim.Adam(
-            list(self.module.encoder.parameters()) +
-            list(self.module.decoder.parameters()) +
-            list(self.module.drug_network.drug_embedding.parameters()) +
-            list(self.module.covars_embedding.parameters()),
+            list(filter(lambda p: p.requires_grad, self.module.encoder.parameters())) +
+            list(filter(lambda p: p.requires_grad, self.module.decoder.parameters())) +
+            list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_embedding.parameters())) +
+            list(filter(lambda p: p.requires_grad, self.module.covars_embedding.parameters())),
             lr=self.autoencoder_lr,
             weight_decay=self.autoencoder_wd)
 
         optimizer_adversaries = torch.optim.Adam(
-            list(self.module.drugs_classifier.parameters()) +
-            list(self.module.covars_classifiers.parameters()),
+            list(filter(lambda p: p.requires_grad, self.module.drugs_classifier.parameters())) +
+            list(filter(lambda p: p.requires_grad, self.module.covars_classifier.parameters())),
             lr=self.adversary_lr,
             weight_decay=self.adversary_wd)
 
         optimizer_dosers = torch.optim.Adam(
-            self.module.drug_network.dosers.parameters(),
+            filter(lambda p: p.requires_grad, self.module.drug_network.dosers.parameters()),
             lr=self.dosers_lr,
             weight_decay=self.dosers_wd)
 
