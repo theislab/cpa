@@ -109,7 +109,7 @@ class CPATrainingPlan(TrainingPlan):
 
         optimizer_adversaries = torch.optim.Adam(
             list(filter(lambda p: p.requires_grad, self.module.drugs_classifier.parameters())) +
-            list(filter(lambda p: p.requires_grad, self.module.covars_classifier.parameters())),
+            list(filter(lambda p: p.requires_grad, self.module.covars_classifiers.parameters())),
             lr=self.adversary_lr,
             weight_decay=self.adversary_wd)
 
