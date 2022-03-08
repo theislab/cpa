@@ -60,6 +60,7 @@ class CPAModule(BaseModuleClass):
                  use_layer_norm: bool = False,
                  dropout_rate: float = 0.0,
                  variational: bool = False,
+                 combinatorial: bool = False,
                  seed: int = 0,
                  ):
         super().__init__()
@@ -82,6 +83,7 @@ class CPAModule(BaseModuleClass):
         self.use_batch_norm = use_batch_norm
         self.use_layer_norm = use_layer_norm
         self.variational = variational
+        self.combinatorial = combinatorial
 
         self.covars_encoder = covars_encoder
 
@@ -195,14 +197,19 @@ class CPAModule(BaseModuleClass):
 
         self.ae_loss_fn = nn.GaussianNLLLoss()
         self.adv_loss_covariates = nn.CrossEntropyLoss()
-        # self.adv_loss_drugs = nn.BCEWithLogitsLoss() # TODO: support Combinatorial
-        self.adv_loss_drugs = nn.CrossEntropyLoss()
+
+        if self.combinatorial:
+            self.adv_loss_drugs = nn.BCEWithLogitsLoss()
+        else:
+            self.adv_loss_drugs = nn.CrossEntropyLoss()
 
     def _get_inference_input(self, tensors):
         x = tensors[_CE_CONSTANTS.X_KEY]  # batch_size, n_genes
-        # drugs_doses = tensors[_CE_CONSTANTS.PERTURBATIONS]  # batch_size, n_drugs
-        drugs = tensors[f"drug_name"]
-        doses = tensors[f"dose_value"]
+        if self.combinatorial:
+            drugs_doses = tensors['drugs_doses']
+        else:
+            drugs = tensors[f"drug_name"]
+            doses = tensors[f"dose_value"]
 
         covars_dict = dict()
         for covar, unique_covars in self.covars_encoder.items():
@@ -211,8 +218,8 @@ class CPAModule(BaseModuleClass):
 
         input_dict = dict(
             genes=x,
-            drugs=drugs,
-            doses=doses,
+            drugs=drugs_doses if self.combinatorial else drugs,
+            doses=None if self.combinatorial else doses,
             covars_dict=covars_dict,
         )
         return input_dict
@@ -336,8 +343,12 @@ class CPAModule(BaseModuleClass):
 
     def adversarial_loss(self, tensors, latent_basal):
         """Computes adversarial classification losses and regularizations"""
-        drugs = tensors[f"drug_name"].view(-1, )
-        batch_size = drugs.shape[0]
+        if self.combinatorial:
+            drugs_doses = tensors['drugs_doses']
+            batch_size = drugs_doses.shape[0]
+        else:
+            drugs = tensors[f"drug_name"].view(-1, )
+            batch_size = drugs.shape[0]
 
         covars_dict = dict()
         for covar, unique_covars in self.covars_encoder.items():
@@ -365,8 +376,8 @@ class CPAModule(BaseModuleClass):
                 if covars_pred[covar] is not None else torch.as_tensor(0.0).to(self.device)
 
         # Classification loss for different drug combinations
-        adv_results['adv_drugs'] = self.adv_loss_drugs(drugs_pred, drugs.long())
-        adv_results['acc_drugs'] = torch.sum(drugs_pred.argmax(1) == drugs.long()) / batch_size
+        adv_results['adv_drugs'] = self.adv_loss_drugs(drugs_pred, drugs_doses.gt(
+            0).float() if self.combinatorial else drugs.long())
         adv_results['adv_loss'] = adv_results['adv_drugs'] + sum(
             [adv_results[f'adv_{key}'] for key in self.covars_encoder.keys()])
 
@@ -389,9 +400,6 @@ class CPAModule(BaseModuleClass):
         )
         adv_results['penalty_adv'] = adv_results['penalty_drugs'] + sum(
             [adv_results[f'penalty_{covar}'] for covar in self.covars_encoder.keys()])
-        adv_results['adv_acc'] = adv_results['acc_drugs'] + sum(
-            [adv_results[f'acc_{covar}'] for covar in self.covars_encoder.keys()
-             if adv_results[f'acc_{covar}'] > 0])
 
         return adv_results
 
@@ -417,6 +425,10 @@ class CPAModule(BaseModuleClass):
     def disentanglement(self, tensors, inference_outputs, generative_outputs, linear=True):
         latent_basal = inference_outputs['latent_basal'].detach().cpu().numpy()
         latent = inference_outputs['latent'].detach().cpu().numpy()
+        # if self.combinatorial:
+        #     drugs_doses = tensors['drugs_doses']
+        #     drugs_doses.gt(0).float().detach().cpu().numpy()
+        # else:
         drug_names = tensors['drug_name'].detach().cpu().numpy()
 
         classifier = LogisticRegression(solver="liblinear",
@@ -497,5 +509,10 @@ class CPAModule(BaseModuleClass):
     def get_drug_embeddings(self, tensors, **inference_kwargs):
         inputs = self._get_inference_input(tensors)
         drugs = inputs['drugs']
-        doses = inputs['doses']
+
+        if self.combinatorial:
+            doses = None
+        else:
+            doses = inputs['doses']
+
         return self.drug_network(drugs, doses)

@@ -1,21 +1,26 @@
 import logging
 import os
+import warnings
 from typing import Optional, Sequence, Union, List
 
 import numpy as np
 import pandas as pd
 import torch
 from pytorch_lightning.callbacks import EarlyStopping
-from scvi.data import setup_anndata, register_tensor_from_anndata
+from scvi.data import setup_anndata, register_tensor_from_anndata, transfer_anndata_setup, get_from_registry
+from scvi.data._anndata import _check_anndata_setup_equivalence
+from scvi.data._utils import _check_nonnegative_integers
 from scvi.dataloaders import DataSplitter
 from sklearn.preprocessing import OneHotEncoder
 from torch.nn import functional as F
+from scvi import _CONSTANTS
 
 from anndata import AnnData
 from scvi.model.base import BaseModelClass
 from scvi.train import TrainRunner
 from scvi.train._callbacks import SaveBestState
 from scvi.utils import setup_anndata_dsp
+from tqdm import tqdm
 
 from ._module import CPAModule, _CE_CONSTANTS
 from ._task import CPATrainingPlan
@@ -71,6 +76,7 @@ class CPA(BaseModelClass):
     """
     covars_encoder: dict
     drug_encoder: dict
+    combinatorial: bool
 
     def __init__(
             self,
@@ -86,11 +92,9 @@ class CPA(BaseModelClass):
         self.n_drugs = len(self.drug_encoder)
         self.split_key = split_key
 
-        mappings = self.adata.uns['_scvi']['categorical_mappings']
-        self.drugs = mappings[f'{_CE_CONSTANTS.DRUG_KEY}_scvi']['mapping']
+        self.drugs = list(self.drug_encoder.keys())
         self.covars = {
-            _CE_CONSTANTS.COVARS_KEYS[i]: list(mappings[f'{_CE_CONSTANTS.COVARS_KEYS[i]}_scvi']['mapping']) \
-            for i in range(len(self.covars_encoder.keys()))
+            covar: list(self.covars_encoder[covar].keys()) for covar in self.covars_encoder.keys()
         }
 
         self.module = CPAModule(
@@ -100,8 +104,9 @@ class CPA(BaseModelClass):
             n_latent=n_latent,
             loss_ae=loss_ae,
             doser_type=doser_type,
+            combinatorial=self.combinatorial,
             **hyper_params,
-        )
+        ).float()
 
         val_idx, train_idx, test_idx = None, None, None
         if split_key is not None:
@@ -126,31 +131,31 @@ class CPA(BaseModelClass):
             drug_key: str,
             dose_key: str,
             control_key: str,
-            combinatorial=False,
+            combinatorial=True,
             categorical_covariate_keys: Optional[List[str]] = None,
             continuous_covariate_keys: Optional[List[str]] = None,
             copy: bool = False,
-    ) -> Optional[AnnData]:
+    ):
         """
         Annotation Data setup function
 
         Parameters
         ----------
-        adata: AnnData
+        adata
 
-        drug_key: str
+        drug_key
 
-        dose_key: str
+        dose_key
 
-        control_key: str
+        control_key
 
-        combinatorial: bool
+        combinatorial
 
-        categorical_covariate_keys: list
+        categorical_covariate_keys
 
-        continuous_covariate_keys: list
+        continuous_covariate_keys
 
-        copy: bool
+        copy
 
         Returns
         -------
@@ -176,37 +181,36 @@ class CPA(BaseModelClass):
             copy=copy,
         )
 
-        register_tensor_from_anndata(adata, "drug_name", "obs", drug_key, is_categorical=True)
-        register_tensor_from_anndata(adata, "dose_value", "obs", dose_key, is_categorical=False)
-        register_tensor_from_anndata(adata, control_key, "obs", control_key, is_categorical=True)
+        if not combinatorial:
+            register_tensor_from_anndata(adata, "drug_name", "obs", drug_key, is_categorical=True)
+            register_tensor_from_anndata(adata, "dose_value", "obs", dose_key, is_categorical=False)
+            register_tensor_from_anndata(adata, control_key, "obs", control_key, is_categorical=True)
 
         if combinatorial:
             drugs = adata.obs[drug_key]
+            dosages = adata.obs[dose_key].astype(str)
 
             # get unique drugs
             drugs_names_unique = set()
-            for d in drugs:
+            for d in np.unique(drugs):
                 [drugs_names_unique.add(i) for i in d.split("+")]
             drugs_names_unique = np.array(list(drugs_names_unique))
 
             drug_encoder = OneHotEncoder(sparse=False)
             drug_encoder.fit(drugs_names_unique.reshape(-1, 1))
 
-            drugs_doses = []
-            for i, comb in enumerate(drugs):
-                drugs_combos = drug_encoder.transform(
-                    np.array(comb.split("+")).reshape(-1, 1))
-                dose_combos = str(adata.obs[dose_key].values[i]).split("+")
-                for j, d in enumerate(dose_combos):
-                    if j == 0:
-                        drug_ohe = float(d) * drugs_combos[j]
-                    else:
-                        drug_ohe += float(d) * drugs_combos[j]
-                drugs_doses.append(drug_ohe)
+            drugs_obsm = np.zeros((adata.n_obs, len(drugs_names_unique)))
+            for i in tqdm(range(adata.n_obs)):
+                cell_drugs = np.isin(drugs_names_unique, drugs[i].split('+'))
+                cell_doses = np.array(dosages[i].split("+")).astype(np.float32)
+                drugs_obsm[i, cell_drugs] = cell_doses
 
-            adata.obsm['drugs_doses'] = np.array(drugs_doses)
+            adata.obsm['drugs_doses'] = np.array(drugs_obsm)
+
             register_tensor_from_anndata(adata, "drugs_doses", "obsm", "drugs_doses")
 
+            drug_encoder = {drug: i for i, drug in
+                            enumerate(drugs_names_unique)}
         else:
             drug_encoder = {drug: i for i, drug in
                             enumerate(adata.uns['_scvi']['categorical_mappings'][f'{drug_key}_scvi']['mapping'])}
@@ -219,6 +223,7 @@ class CPA(BaseModelClass):
 
         CPA.covars_encoder = covars_encoder
         CPA.drug_encoder = drug_encoder
+        CPA.combinatorial = combinatorial
 
     def train(
             self,
@@ -398,6 +403,7 @@ class CPA(BaseModelClass):
         assert self.module.loss_ae in ["gauss", 'mse']
         self.module.eval()
 
+        # adata = self.adata if adata is None else adata
         adata = self._validate_anndata(adata)
         if indices is None:
             indices = np.arange(adata.n_obs)
@@ -422,6 +428,39 @@ class CPA(BaseModelClass):
 
         return pred_adata_mean, pred_adata_var
 
+    def _validate_anndata(
+        self, adata: Optional[AnnData] = None, copy_if_view: bool = True
+    ):
+        """Validate anndata has been properly registered, transfer if necessary."""
+        if adata is None:
+            adata = self.adata
+        if adata.is_view:
+            if copy_if_view:
+                logger.info("Received view of anndata, making copy.")
+                adata = adata.copy()
+            else:
+                raise ValueError("Please run `adata = adata.copy()`")
+
+        if "_scvi" not in adata.uns_keys():
+            logger.info(
+                "Input adata not setup with scvi. "
+                + "attempting to transfer anndata setup"
+            )
+            transfer_anndata_setup(self.scvi_setup_dict_, adata, extend_categories=True)
+        is_nonneg_int = _check_nonnegative_integers(
+            get_from_registry(adata, _CONSTANTS.X_KEY)
+        )
+        if not is_nonneg_int:
+            warnings.warn(
+                "Make sure the registered X field in anndata contains unnormalized count data."
+            )
+
+        needs_transfer = _check_anndata_setup_equivalence(self.scvi_setup_dict_, adata)
+        if needs_transfer:
+            transfer_anndata_setup(self.scvi_setup_dict_, adata, extend_categories=True)
+
+        return adata
+
     @torch.no_grad()
     def get_drug_embeddings(self, doses=1.0, drug: Optional[str] = None):
         """Computes all drug drug
@@ -434,12 +473,15 @@ class CPA(BaseModelClass):
             Drug name if single drug embedding is desired
 
         """
+        self.module.eval()
         if isinstance(doses, float):
             if drug is None:
                 treatments = doses * torch.eye(self.n_drugs, device=self.device)
             else:
                 treatments = doses * F.one_hot(torch.LongTensor([self.drug_encoder[drug]]).to(self.device),
                                                self.n_drugs)
+        elif isinstance(doses, np.ndarray):
+            treatments = torch.tensor(doses).to(self.device).float()
         else:
             treatments = doses
 
