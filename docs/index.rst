@@ -2,7 +2,7 @@ CPA - Compositional Perturbation Autoencoder
 ############################################
 
 .. image:: https://user-images.githubusercontent.com/33202701/156530222-c61e5982-d063-461c-b66e-c4591d2d0de4.png?raw=true
-  :width: 400
+  :width: 800
   :alt: The architecture of CPA
 
 What is CPA?
