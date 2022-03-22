@@ -33,7 +33,7 @@ pip prerequisites:
 CPA installation
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-Install my_package in one of the following ways:
+Install cpa-tools in one of the following ways:
 
 Through **pip**::
 
