@@ -67,6 +67,7 @@ scipy = "^1.7.3"
 [tool.poetry.extras]
 dev = ["black", "pytest", "flake8", "codecov", "scanpy", "loompy", "jupyter", "nbformat", "nbconvert", "pre-commit", "isort"]
 docs = [
+  "scanpy",
   "sphinx",
   "scanpydoc",
   "nbsphinx",
