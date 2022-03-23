@@ -54,15 +54,21 @@ source_suffix = ['.rst', '.md']
 # Generate the API documentation when building
 autosummary_generate = True
 autodoc_member_order = "bysource"
-napoleon_google_docstring = False
+napoleon_google_docstring = True  # for pytorch lightning
 napoleon_numpy_docstring = True
 napoleon_include_init_with_doc = False
-napoleon_use_rtype = True
+napoleon_use_rtype = True  # having a separate entry generally helps readability
 napoleon_use_param = True
 napoleon_custom_sections = [("Params", "Parameters")]
 todo_include_todos = False
 numpydoc_show_class_members = False
-annotate_defaults = True
+annotate_defaults = True  # scanpydoc option, look into why we need this
+myst_enable_extensions = [
+    "colon_fence",
+    "dollarmath",
+    "amsmath",
+]
+
 # The master toctree document.
 master_doc = "index"
 
@@ -70,8 +76,8 @@ intersphinx_mapping = dict(
     anndata=("https://anndata.readthedocs.io/en/stable/", None),
     ipython=("https://ipython.readthedocs.io/en/stable/", None),
     matplotlib=("https://matplotlib.org/", None),
-    numpy=("https://docs.scipy.org/doc/numpy/", None),
-    pandas=("https://pandas.pydata.org/pandas-docs/stable/", None),
+    numpy=("https://numpy.org/doc/stable/", None),
+    pandas=("https://pandas.pydata.org/docs/", None),
     python=("https://docs.python.org/3", None),
     scipy=("https://docs.scipy.org/doc/scipy/reference/", None),
     sklearn=("https://scikit-learn.org/stable/", None),
@@ -82,7 +88,7 @@ intersphinx_mapping = dict(
 
 # General information about the project.
 project = u"cpa-tools"
-copyright = u"2022, TheisLab"
+copyright = u"2022, TheisLab, ICB"
 author = u"Mohsen Naghipourfar"
 
 # The version info for the project you're documenting, acts as replacement
@@ -107,7 +113,8 @@ language = None
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 # The name of the Pygments (syntax highlighting) style to use.
-pygments_style = "tango"
+pygments_style = "default"
+pygments_dark_style = "native"
 
 # If true, `todo` and `todoList` produce output, else they produce nothing.
 todo_include_todos = False
@@ -118,6 +125,7 @@ todo_include_todos = False
 # a list of builtin themes.
 #
 html_theme = "sphinx_rtd_theme"
+html_title = "cpa-tools"
 
 html_show_sourcelink = False
 
@@ -132,6 +140,7 @@ html_static_path = ["_static"]
 
 html_css_files = [
     "css/custom.css",
+    'css/gallery.css'
 ]
 
 html_favicon = "favicon.ico"
@@ -174,3 +183,8 @@ nbsphinx_prolog = r"""
 """.format(
     version=version, docname="{{ docname|e }}"
 )
+
+nbsphinx_thumbnails = {
+    "tutorials/notebooks/train_GSM": "https://user-images.githubusercontent.com/33202701/156530222-c61e5982-d063-461c-b66e-c4591d2d0de4.png?raw=true",
+    "tutorials/notebooks/Analysis_GSM": "https://user-images.githubusercontent.com/33202701/156530222-c61e5982-d063-461c-b66e-c4591d2d0de4.png?raw=true",
+}
