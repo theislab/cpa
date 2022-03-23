@@ -15,7 +15,7 @@
 
 Usage and installation
 -------------------------------
-See [here](https://scarches.readthedocs.io/) for documentation and tutorials.
+See [here](https://cpa-tools.readthedocs.io/en/latest/index.html) for documentation and tutorials.
 
 Support and contribute
 -------------------------------
