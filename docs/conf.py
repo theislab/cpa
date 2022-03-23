@@ -155,7 +155,7 @@ nbsphinx_prolog = r"""
     <p class="admonition-title">Note</p>
     <p>
       This page was generated from
-      <a class="reference external" href="https://github.com/theislab/cpa/docs/tutorials/">{{ docname|e }}</a>.
+      <a class="reference external" href="https://github.com/theislab/cpa/tree/main/docs/tutorials/">{{ docname|e }}</a>.
       Interactive online version:
       <span style="white-space: nowrap;"><a href="https://colab.research.google.com/github/theislab/cpa/blob/master/docs/tutorials/{{ docname|e }}"><img alt="Colab badge" src="https://colab.research.google.com/assets/colab-badge.svg" style="vertical-align:text-bottom"></a>.</span>
     </p>
