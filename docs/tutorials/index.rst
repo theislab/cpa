@@ -14,4 +14,4 @@ For Downstream analysis of trained CPA on Sciplex2 dataset, check this example.
 .. toctree::
     :maxdepth: 1
 
-    notebooks/Analysis_GSM
+    Analysis_GSM
