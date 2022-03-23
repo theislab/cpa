@@ -140,7 +140,6 @@ html_static_path = ["_static"]
 
 html_css_files = [
     "css/custom.css",
-    'css/gallery.css'
 ]
 
 html_favicon = "favicon.ico"
