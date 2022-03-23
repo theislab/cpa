@@ -147,44 +147,15 @@ html_favicon = "favicon.ico"
 
 nbsphinx_prolog = r"""
 .. raw:: html
-{{% set docname = env.doc2path(env.docname, base=None).split("/")[-1] %}}
-.. raw:: html
-    <style>
-        p {{
-            margin-bottom: 0.5rem;
-        }}
-        /* Main index page overview cards */
-        /* https://github.com/spatialaudio/nbsphinx/pull/635/files */
-        .jp-RenderedHTMLCommon table,
-        div.rendered_html table {{
-        border: none;
-        border-collapse: collapse;
-        border-spacing: 0;
-        font-size: 12px;
-        table-layout: fixed;
-        color: inherit;
-        }}
-        body:not([data-theme=light]) .jp-RenderedHTMLCommon tbody tr:nth-child(odd),
-        body:not([data-theme=light]) div.rendered_html tbody tr:nth-child(odd) {{
-        background: rgba(255, 255, 255, .1);
-        }}
-    </style>
+{% set docname = env.doc2path(env.docname, base=None).split("/")[-1] %}
 .. raw:: html
     <div class="admonition note">
-        <p class="admonition-title">Note</p>
-        <p>
-        This page was generated from
-        <a class="reference external" href="https://github.com/scverse/scvi-tutorials/tree/{version}/">{docname}</a>.
-        Interactive online version:
-        <span style="white-space: nowrap;"><a href="https://colab.research.google.com/github/scverse/scvi-tutorials/blob/{version}/{docname}"><img alt="Colab badge" src="https://colab.research.google.com/assets/colab-badge.svg" style="vertical-align:text-bottom"></a>.</span>
-        Some tutorial content may look better in light mode.
-        </p>
+    <p class="admonition-title">Note</p>
+    <p>
+      This page was generated from
+      <a class="reference external" href="https://github.com/theislab/cpa/docs/tutorials/">{{ docname|e }}</a>.
+      Interactive online version:
+      <span style="white-space: nowrap;"><a href="https://colab.research.google.com/github/theislab/cpa/blob/master/docs/tutorials/{{ docname|e }}"><img alt="Colab badge" src="https://colab.research.google.com/assets/colab-badge.svg" style="vertical-align:text-bottom"></a>.</span>
+    </p>
     </div>
-""".format(
-    version=version, docname="{{ docname|e }}"
-)
-
-nbsphinx_thumbnails = {
-    "tutorials/notebooks/train_GSM": "https://user-images.githubusercontent.com/33202701/156530222-c61e5982-d063-461c-b66e-c4591d2d0de4.png?raw=true",
-    "tutorials/notebooks/Analysis_GSM": "https://user-images.githubusercontent.com/33202701/156530222-c61e5982-d063-461c-b66e-c4591d2d0de4.png?raw=true",
-}
+"""
