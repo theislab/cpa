@@ -76,6 +76,7 @@ docs = [
   "pydata-sphinx-theme",
   "typing_extensions",
   "sphinx-autodoc-typehints",
+  "sphinx_gallery",
   "sphinx-rtd-theme",
 ]
 tutorials = ["scanpy", "leidenalg", "python-igraph", "loompy", "scikit-misc"]
