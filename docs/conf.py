@@ -146,8 +146,11 @@ html_favicon = "favicon.ico"
 
 nbsphinx_prolog = r"""
 .. raw:: html
+
 {% set docname = env.doc2path(env.docname, base=None).split("/")[-1] %}
+
 .. raw:: html
+
     <div class="admonition note">
     <p class="admonition-title">Note</p>
     <p>
