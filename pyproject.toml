@@ -68,6 +68,7 @@ scipy = "^1.7.3"
 dev = ["black", "pytest", "flake8", "codecov", "scanpy", "loompy", "jupyter",
     "nbformat", "nbconvert", "pre-commit", "isort"]
 docs = [
+    "jinja2<3.0.3",
     "scanpy",
     "sphinx",
     "scanpydoc",
@@ -79,7 +80,6 @@ docs = [
     "sphinx-autodoc-typehints",
     "sphinx_gallery",
     "sphinx-rtd-theme",
-    "jinja2<3.0.3"
 ]
 tutorials = ["scanpy", "leidenalg", "python-igraph", "loompy", "scikit-misc"]
 
