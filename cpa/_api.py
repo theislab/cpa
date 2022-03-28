@@ -920,7 +920,7 @@ class ComPertAPI:
                                        'R2_var_DE', 'num_cells'])
 
         control_adata = self.adatas['test'].copy()
-        control_adata = control_adata[control_adata.obs[self.perturbation_key] == 'control']
+        control_adata = control_adata[control_adata.obs[self.control_key] == 1]
 
         icond = 0
         for pert_category in np.unique(self.adata.obs[self.pert_categories_key].value_counts().index):
