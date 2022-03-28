@@ -27,6 +27,7 @@ from ._task import CPATrainingPlan
 from ._data import ManualDataSplitter
 
 logger = logging.getLogger(__name__)
+logger.propagate = False
 
 
 class CPA(BaseModelClass):
@@ -212,9 +213,8 @@ class CPA(BaseModelClass):
             adata.obsm['drugs_doses'] = np.array(drugs_obsm)
 
             register_tensor_from_anndata(adata, "drugs_doses", "obsm", "drugs_doses")
-
             drug_encoder = {drug: i for i, drug in
-                            enumerate(drugs_names_unique)}
+                            enumerate(list(drug_encoder.categories_[0]))}
         else:
             drug_encoder = {drug: i for i, drug in
                             enumerate(adata.uns['_scvi']['categorical_mappings'][f'{drug_key}_scvi']['mapping'])}
