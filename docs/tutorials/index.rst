@@ -14,4 +14,4 @@ Training on Norman 2019 dataset, check this example:
 .. toctree::
     :maxdepth: 1
 
-    Norman2019
+    Norman
