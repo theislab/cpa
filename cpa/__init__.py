@@ -1,3 +1,7 @@
+import warnings
+
+warnings.simplefilter('ignore')
+
 from ._model import CPA
 from ._module import CPAModule
 from . import _plotting as pl
