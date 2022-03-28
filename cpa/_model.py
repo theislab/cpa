@@ -81,13 +81,17 @@ class CPA(BaseModelClass):
     def __init__(
             self,
             adata: AnnData,
-            n_latent: int,
-            loss_ae: str,
-            doser_type: str,
+            n_latent: int = 128,
+            loss_ae: str = 'gauss',
+            doser_type: str = 'logsigm',
             split_key: str = None,
             **hyper_params,
     ):
         super().__init__(adata)
+        self.drug_encoder = self.drug_encoder
+        self.covars_encoder = self.covars_encoder
+        self.combinatorial = self.combinatorial
+
         self.n_genes = self.summary_stats["n_vars"]
         self.n_drugs = len(self.drug_encoder)
         self.split_key = split_key
@@ -297,29 +301,20 @@ class CPA(BaseModelClass):
         trainer_kwargs["early_stopping"] = False
         trainer_kwargs.update({'weights_summary': 'top'})
         trainer_kwargs['check_val_every_n_epoch'] = trainer_kwargs.get('check_val_every_n_epoch', 20)
-        trainer_kwargs['callbacks'] = []
 
-        if hyperopt:
-            from pytorch_lightning.loggers import TensorBoardLogger
-            from ray.tune.integration.pytorch_lightning import TuneReportCallback
-            from ray import tune
+        es_callback = EarlyStopping(monitor='cpa_metric',
+                                    patience=trainer_kwargs['early_stopping_patience'],
+                                    check_on_train_epoch_end=False,
+                                    verbose=False,
+                                    mode='max',
+                                    )
+        trainer_kwargs['callbacks'] = [es_callback]
 
-            hyperopt_callback = TuneReportCallback({"cpa_metric": "cpa_metric",
-                                                    'val_reg_mean': 'val_reg_mean',
-                                                    'val_reg_var': 'val_reg_var',
-                                                    'val_disent_basal_drugs': 'val_disent_basal_drugs'},
-                                                   on="validation_end")
-            tensorboard_logger = TensorBoardLogger(save_dir=tune.get_trial_dir(), name="", version="."),
+        if save_path is None:
+            save_path = './'
 
-            trainer_kwargs.update({'callbacks': [hyperopt_callback], 'logger': tensorboard_logger})
-
-        else:
-            es_callback = EarlyStopping(monitor='cpa_metric', patience=trainer_kwargs['early_stopping_patience'])
-            trainer_kwargs['callbacks'].append(es_callback)
-            if save_path is not None:
-                os.makedirs(os.path.join(save_path, 'checkpoints/'), exist_ok=True)
-                checkpoint = SaveBestState(monitor='cpa_metric', mode='max', period=20, verbose=True)
-                trainer_kwargs['callbacks'].append(checkpoint)
+        checkpoint = SaveBestState(monitor='cpa_metric', mode='max', period=20, verbose=False)
+        trainer_kwargs['callbacks'].append(checkpoint)
 
         runner = TrainRunner(
             self,
@@ -429,7 +424,7 @@ class CPA(BaseModelClass):
         return pred_adata_mean, pred_adata_var
 
     def _validate_anndata(
-        self, adata: Optional[AnnData] = None, copy_if_view: bool = True
+            self, adata: Optional[AnnData] = None, copy_if_view: bool = True
     ):
         """Validate anndata has been properly registered, transfer if necessary."""
         if adata is None:
