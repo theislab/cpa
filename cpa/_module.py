@@ -46,15 +46,15 @@ class CPAModule(BaseModuleClass):
                  n_genes: int,
                  n_drugs: int,
                  covars_encoder: dict,
-                 n_latent: int = 256,
+                 n_latent: int = 128,
                  loss_ae="gauss",
-                 doser_type="linear",
+                 doser_type="logsigm",
                  output_activation: str = 'linear',
                  autoencoder_width=256,
-                 autoencoder_depth=2,
-                 adversary_width=128,
-                 adversary_depth=3,
-                 dosers_width: int = 64,
+                 autoencoder_depth=3,
+                 adversary_width=64,
+                 adversary_depth=2,
+                 dosers_width: int = 128,
                  dosers_depth: int = 2,
                  use_batch_norm: bool = True,
                  use_layer_norm: bool = False,
@@ -425,11 +425,11 @@ class CPAModule(BaseModuleClass):
     def disentanglement(self, tensors, inference_outputs, generative_outputs, linear=True):
         latent_basal = inference_outputs['latent_basal'].detach().cpu().numpy()
         latent = inference_outputs['latent'].detach().cpu().numpy()
-        # if self.combinatorial:
-        #     drugs_doses = tensors['drugs_doses']
-        #     drugs_doses.gt(0).float().detach().cpu().numpy()
-        # else:
-        drug_names = tensors['drug_name'].detach().cpu().numpy()
+        if self.combinatorial:
+            drugs_doses = tensors['drugs_doses']
+            drug_names = drugs_doses.argmax(dim=1).float().detach().cpu().numpy()
+        else:
+            drug_names = tensors['drug_name'].detach().cpu().numpy()
 
         classifier = LogisticRegression(solver="liblinear",
                                         multi_class="auto",
@@ -500,8 +500,10 @@ class CPAModule(BaseModuleClass):
             inference_kwargs=inference_kwargs,
         )
         if self.loss_ae in ["gauss", 'mse']:
-            mus = generative_outputs["means"]
-            stds = generative_outputs["variances"]
+            mus = torch.nan_to_num(generative_outputs['means'], nan=1e2, neginf=-1e3,
+                                   posinf=1e3)  # batch_size, n_genes
+            stds = torch.nan_to_num(generative_outputs['variances'], nan=1e2, neginf=-1e3,
+                                    posinf=1e3)  # batch_size, n_genes
             return mus, stds
         else:
             raise ValueError
