@@ -201,9 +201,6 @@ class CPA(BaseModelClass):
                 [drugs_names_unique.add(i) for i in d.split("+")]
             drugs_names_unique = np.array(list(drugs_names_unique))
 
-            drug_encoder = OneHotEncoder(sparse=False)
-            drug_encoder.fit(drugs_names_unique.reshape(-1, 1))
-
             drugs_obsm = np.zeros((adata.n_obs, len(drugs_names_unique)))
             for i in tqdm(range(adata.n_obs)):
                 cell_drugs = np.isin(drugs_names_unique, drugs[i].split('+'))
@@ -214,7 +211,7 @@ class CPA(BaseModelClass):
 
             register_tensor_from_anndata(adata, "drugs_doses", "obsm", "drugs_doses")
             drug_encoder = {drug: i for i, drug in
-                            enumerate(list(drug_encoder.categories_[0]))}
+                            enumerate(drugs_names_unique)}
         else:
             drug_encoder = {drug: i for i, drug in
                             enumerate(adata.uns['_scvi']['categorical_mappings'][f'{drug_key}_scvi']['mapping'])}
