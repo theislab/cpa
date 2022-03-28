@@ -63,11 +63,10 @@ seaborn = "^0.11.2"
 scikit-learn = "^1.0.2"
 numpy = "^1.21.5"
 scipy = "^1.7.3"
-Jinja2 = "^3.0.3"
 
 [tool.poetry.extras]
 dev = ["black", "pytest", "flake8", "codecov", "scanpy", "loompy", "jupyter",
-    "nbformat", "nbconvert", "pre-commit", "isort", "Jinja2==3.0.3"]
+    "nbformat", "nbconvert", "pre-commit", "isort"]
 docs = [
     "scanpy",
     "sphinx",
@@ -80,7 +79,7 @@ docs = [
     "sphinx-autodoc-typehints",
     "sphinx_gallery",
     "sphinx-rtd-theme",
-    "Jinja2==3.0.3"
+    "jinja2<3.0.3"
 ]
 tutorials = ["scanpy", "leidenalg", "python-igraph", "loompy", "scikit-misc"]
 
