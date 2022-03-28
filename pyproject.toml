@@ -78,6 +78,7 @@ docs = [
   "sphinx-autodoc-typehints",
   "sphinx_gallery",
   "sphinx-rtd-theme",
+  "Jinja2==3.0.3"
 ]
 tutorials = ["scanpy", "leidenalg", "python-igraph", "loompy", "scikit-misc"]
 
