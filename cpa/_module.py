@@ -13,7 +13,7 @@ from scvi.nn import Encoder, FCLayers
 from scvi.module import Classifier
 from scvi import settings
 
-from ._utils import _CE_CONSTANTS, DecoderGauss, DecoderNB, DrugNetwork, SimpleEncoder
+from ._utils import _CE_CONSTANTS, DecoderNormal, DrugNetwork, VanillaEncoder
 
 import numpy as np
 
@@ -32,7 +32,7 @@ class CPAModule(BaseModuleClass):
         n_latent: int
             Latent Dimension
         loss_ae: str
-            Autoencoder loss (either "gauss" or "nb")
+            Autoencoder loss (either "gauss" or "mse")
         doser: str
             # TODO: What is this
         autoencoder_width: int
@@ -64,6 +64,8 @@ class CPAModule(BaseModuleClass):
                  seed: int = 0,
                  ):
         super().__init__()
+
+        assert loss_ae in ['mse', 'gauss']
 
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -101,7 +103,7 @@ class CPAModule(BaseModuleClass):
                 activation_fn=nn.ReLU,
             )
         else:
-            self.encoder = SimpleEncoder(
+            self.encoder = VanillaEncoder(
                 n_input=n_genes,
                 n_output=n_latent,
                 n_hidden=autoencoder_width,
@@ -112,19 +114,9 @@ class CPAModule(BaseModuleClass):
                 activation_fn=nn.ReLU,
             )
 
-        if self.loss_ae == 'nb':
-            self.l_encoder = FCLayers(
-                n_in=n_genes,
-                n_out=1,
-                n_hidden=autoencoder_width,
-                n_layers=autoencoder_depth,
-                use_batch_norm=use_batch_norm,
-                use_layer_norm=use_layer_norm,
-            )
-
         # Decoder components
         if loss_ae in ["gauss", 'mse']:
-            self.decoder = DecoderGauss(
+            self.decoder = DecoderNormal(
                 n_input=n_latent,
                 n_output=n_genes,
                 n_hidden=autoencoder_width,
@@ -132,17 +124,6 @@ class CPAModule(BaseModuleClass):
                 use_batch_norm=use_batch_norm,
                 use_layer_norm=use_layer_norm,
                 output_activation=output_activation,
-                dropout_rate=dropout_rate,
-            )
-        elif loss_ae == 'nb':
-            self.px_r = torch.nn.Parameter(torch.randn(n_genes))
-            self.decoder = DecoderNB(
-                n_input=n_latent,
-                n_output=n_genes,
-                n_hidden=autoencoder_width,
-                n_layers=autoencoder_depth,
-                use_batch_norm=use_batch_norm,
-                use_layer_norm=use_layer_norm,
                 dropout_rate=dropout_rate,
             )
 
@@ -236,16 +217,11 @@ class CPAModule(BaseModuleClass):
         batch_size = genes.shape[0]
         x_ = genes
         if self.variational:
-            qz_m, qz_v, latent_basal = self.encoder(x_)
-            dist_qzbasal = db.Normal(qz_m, qz_v.sqrt())
+            z_means, z_vars, latent_basal = self.encoder(x_)
+            basal_distribution = db.Normal(z_means, z_vars.sqrt())
         else:
-            dist_qzbasal = None
+            basal_distribution = None
             latent_basal = self.encoder(x_)
-
-        if self.loss_ae == 'nb':
-            library = self.l_encoder(x_)
-        else:
-            library = None
 
         latent_covariates = []
         for covar, _ in self.covars_encoder.items():
@@ -260,8 +236,7 @@ class CPAModule(BaseModuleClass):
         return dict(
             latent=latent,
             latent_basal=latent_basal,
-            dist_qz=dist_qzbasal,
-            library=library,
+            basal_distribution=basal_distribution,
         )
 
     def _get_generative_input(self, tensors, inference_outputs, **kwargs):
@@ -269,9 +244,6 @@ class CPAModule(BaseModuleClass):
 
         latent = inference_outputs["latent"]
         latent_basal = inference_outputs['latent_basal']
-        if self.loss_ae == 'nb':
-            library = inference_outputs["library"]
-            input_dict["library"] = library
 
         covars_dict = dict()
         for covar, _ in self.covars_encoder.items():
@@ -288,56 +260,32 @@ class CPAModule(BaseModuleClass):
             latent,
             latent_basal,
     ):
-        if self.loss_ae == 'nb':
-            dist_px = self.decoder(inputs=latent, px_r=self.px_r)
-            return dict(
-                dist_px=dist_px,
-            )
-
-        else:
-            outputs = self.decoder(inputs=latent)
-            return dict(
-                means=outputs.loc,
-                variances=outputs.variance,
-            )
+        outputs = self.decoder(inputs=latent)
+        return dict(
+            means=outputs.loc,
+            variances=outputs.variance,
+        )
 
     def loss(self, tensors, inference_outputs, generative_outputs):
         """Computes the reconstruction loss (AE) or the ELBO (VAE)"""
         x = tensors[_CE_CONSTANTS.X_KEY]
-        # x = inference_outputs["x"]
 
-        # Reconstruction loss & regularizations
         means = generative_outputs["means"]
         variances = generative_outputs["variances"]
 
-        # log_px = dist_px.log_prob(x).sum(-1)
-        # Compute reconstruction
-        # reconstruction_loss = -log_px
         if self.loss_ae in ["gauss", "mse"]:
-            # TODO: Check with Normal Distribution
             reconstruction_loss = self.ae_loss_fn(x, means, variances)
-            # variance = dist_px.scale ** 2
-            # mean = dist_px.loc
-            # term1 = variances.log().div(2)
-            # term2 = (x - means).pow(2).div(variances.mul(2))
-            #
-            # reconstruction_loss = (term1 + term2).mean()
-            # term1 = variance.log().div(2)
-            # term2 = (x - mean).pow(2).div(variance.mul(2))
-            # reconstruction_loss = (term1 + term2).mean()
         else:
             raise Exception('Invalid Loss function for CPA')
-        # elif self.loss_ae == 'mse':
-        #     reconstruction_loss = (x - means).pow(2)
 
         # TODO: Add KL annealing if needed
         kl_loss = 0.0
         if self.variational:
-            dist_qz = inference_outputs["dist_qz"]
+            basal_distribution = inference_outputs["basal_distribution"]
             dist_pz = db.Normal(
-                torch.zeros_like(dist_qz.loc), torch.ones_like(dist_qz.scale)
+                torch.zeros_like(basal_distribution.loc), torch.ones_like(basal_distribution.scale)
             )
-            kl_loss = kl_divergence(dist_qz, dist_pz).sum(-1)
+            kl_loss = kl_divergence(basal_distribution, dist_pz).sum(-1)
 
         return reconstruction_loss, kl_loss
 

@@ -11,7 +11,6 @@ from scvi.data import setup_anndata, register_tensor_from_anndata, transfer_annd
 from scvi.data._anndata import _check_anndata_setup_equivalence
 from scvi.data._utils import _check_nonnegative_integers
 from scvi.dataloaders import DataSplitter
-from sklearn.preprocessing import OneHotEncoder
 from torch.nn import functional as F
 from scvi import _CONSTANTS
 
@@ -24,7 +23,7 @@ from tqdm import tqdm
 
 from ._module import CPAModule, _CE_CONSTANTS
 from ._task import CPATrainingPlan
-from ._data import ManualDataSplitter
+from ._data import AnnDataSplitter
 
 logger = logging.getLogger(__name__)
 logger.propagate = False
@@ -86,6 +85,9 @@ class CPA(BaseModelClass):
             loss_ae: str = 'gauss',
             doser_type: str = 'logsigm',
             split_key: str = None,
+            train_split: str = 'train',
+            valid_split: str = 'test',
+            test_split: str = 'ood',
             **hyper_params,
     ):
         super().__init__(adata)
@@ -113,15 +115,15 @@ class CPA(BaseModelClass):
             **hyper_params,
         ).float()
 
-        val_idx, train_idx, test_idx = None, None, None
+        train_indices, valid_indices, test_indices = None, None, None
         if split_key is not None:
-            train_idx = np.where(adata.obs.loc[:, split_key] == "train")[0]
-            val_idx = np.where(adata.obs.loc[:, split_key] == "test")[0]
-            test_idx = np.where(adata.obs.loc[:, split_key] == "ood")[0]
+            train_indices = np.where(adata.obs.loc[:, split_key] == train_split)[0]
+            valid_indices = np.where(adata.obs.loc[:, split_key] == valid_split)[0]
+            test_indices = np.where(adata.obs.loc[:, split_key] == test_split)[0]
 
-        self.val_idx = val_idx
-        self.train_idx = train_idx
-        self.test_idx = test_idx
+        self.train_indices = train_indices
+        self.valid_indices = valid_indices
+        self.test_indices = test_indices
 
         self._model_summary_string = f"Compositional Perturbation Autoencoder"
 
@@ -269,16 +271,16 @@ class CPA(BaseModelClass):
         plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else dict()
 
         manual_splitting = (
-                (self.val_idx is not None)
-                and (self.train_idx is not None)
-                and (self.test_idx is not None)
+                (self.valid_indices is not None)
+                and (self.train_indices is not None)
+                and (self.test_indices is not None)
         )
         if manual_splitting:
-            data_splitter = ManualDataSplitter(
+            data_splitter = AnnDataSplitter(
                 self.adata,
-                train_idx=self.train_idx,
-                val_idx=self.val_idx,
-                test_idx=self.test_idx,
+                train_indices=self.train_indices,
+                valid_indices=self.valid_indices,
+                test_indices=self.test_indices,
                 batch_size=batch_size,
                 use_gpu=use_gpu,
             )

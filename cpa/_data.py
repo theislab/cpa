@@ -6,24 +6,22 @@ from scvi.dataloaders import DataSplitter, AnnDataLoader
 from scvi.model._utils import parse_use_gpu_arg
 
 
-class ManualDataSplitter(DataSplitter):
-    """Manual train validation test splitter"""
-
+class AnnDataSplitter(DataSplitter):
     def __init__(
             self,
             adata: AnnData,
-            train_idx,
-            val_idx,
-            test_idx,
+            train_indices,
+            valid_indices,
+            test_indices,
             use_gpu: bool = False,
             **kwargs,
     ):
         super().__init__(adata)
         self.data_loader_kwargs = kwargs
         self.use_gpu = use_gpu
-        self.val_idx = val_idx
-        self.train_idx = train_idx
-        self.test_idx = test_idx
+        self.train_indices = train_indices
+        self.valid_indices = valid_indices
+        self.test_indices = test_indices
 
     def setup(self, stage: Optional[str] = None):
         gpus, self.device = parse_use_gpu_arg(self.use_gpu, return_device=True)
@@ -32,15 +30,15 @@ class ManualDataSplitter(DataSplitter):
         )
 
     def val_dataloader(self):
-        if len(self.val_idx) > 0:
+        if len(self.valid_indices) > 0:
             data_loader_kwargs = self.data_loader_kwargs.copy()
-            if len(self.val_idx < 5000):
-                data_loader_kwargs.update({'batch_size': len(self.val_idx)})
+            if len(self.valid_indices < 4096):
+                data_loader_kwargs.update({'batch_size': len(self.valid_indices)})
             else:
                 data_loader_kwargs.update({'batch_size': 2048})
             return AnnDataLoader(
                 self.adata,
-                indices=self.val_idx,
+                indices=self.valid_indices,
                 shuffle=True,
                 pin_memory=self.pin_memory,
                 **data_loader_kwargs,
@@ -49,10 +47,10 @@ class ManualDataSplitter(DataSplitter):
             pass
 
     def test_dataloader(self):
-        if len(self.test_idx) > 0:
+        if len(self.test_indices) > 0:
             return AnnDataLoader(
                 self.adata,
-                indices=self.test_idx,
+                indices=self.test_indices,
                 shuffle=True,
                 pin_memory=self.pin_memory,
                 **self.data_loader_kwargs,

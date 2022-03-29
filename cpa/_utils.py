@@ -4,15 +4,13 @@ import torch.nn.functional as F
 
 from scvi.dataloaders import DataSplitter
 from scvi.model._utils import parse_use_gpu_arg
-from scvi.dataloaders._ann_dataloader import AnnDataLoader, BatchSampler
-from scvi.dataloaders._anntorchdataset import AnnTorchDataset
+from scvi.dataloaders._ann_dataloader import AnnDataLoader
 from scvi import settings
 
 from typing import Optional, Union
 
 from anndata import AnnData
 
-from scvi.distributions import NegativeBinomial
 from scvi.nn import FCLayers
 from torch.distributions import Normal
 
@@ -26,36 +24,7 @@ class _CE_CONSTANTS:
     COVARS_KEYS = []
 
 
-class DecoderNB(nn.Module):
-    def __init__(
-            self,
-            n_input,
-            n_output,
-            n_hidden,
-            n_layers,
-            use_layer_norm=True,
-            use_batch_norm=False,
-    ):
-        super().__init__()
-        self.hidd = nn.Sequential(
-            FCLayers(
-                n_in=n_input,
-                n_out=n_output,
-                n_layers=n_layers,
-                n_hidden=n_hidden,
-                use_layer_norm=use_layer_norm,
-                use_batch_norm=use_batch_norm,
-            ),
-            nn.Softmax(-1),
-        )
-
-    def forward(self, inputs, library, px_r):
-        px_scale = self.hidd(inputs)
-        px_rate = library.exp() * px_scale
-        return NegativeBinomial(mu=px_rate, theta=px_r.exp())
-
-
-class SimpleEncoder(nn.Module):
+class VanillaEncoder(nn.Module):
     def __init__(
             self,
             n_input,
@@ -89,7 +58,7 @@ class SimpleEncoder(nn.Module):
         return z
 
 
-class DecoderGauss(nn.Module):
+class DecoderNormal(nn.Module):
     def __init__(
             self,
             n_input,
@@ -127,7 +96,6 @@ class DecoderGauss(nn.Module):
 
         variances = var_.exp().add(1).log().add(1e-3)
         return Normal(loc=locs, scale=variances.sqrt())
-        # return locs, variances
 
 
 class GeneralizedSigmoid(nn.Module):
@@ -245,58 +213,3 @@ class DrugNetwork(nn.Module):
                 return torch.einsum('b,be->be', [scaled_dosages, drug_embeddings])
             else:
                 return self.dosers(drugs) @ self.drug_embedding.weight
-
-
-class ManualDataSplitter(DataSplitter):
-    """Manual train validation test splitter"""
-
-    def __init__(
-            self,
-            adata: AnnData,
-            train_idx,
-            val_idx,
-            test_idx,
-            use_gpu: bool = False,
-            **kwargs,
-    ):
-        super().__init__(adata)
-        self.data_loader_kwargs = kwargs
-        self.use_gpu = use_gpu
-        self.val_idx = val_idx
-        self.train_idx = train_idx
-        self.test_idx = test_idx
-
-    def setup(self, stage: Optional[str] = None):
-        gpus, self.device = parse_use_gpu_arg(self.use_gpu, return_device=True)
-        self.pin_memory = (
-            True if (settings.dl_pin_memory_gpu_training and gpus != 0) else False
-        )
-
-    def val_dataloader(self):
-        if len(self.val_idx) > 0:
-            data_loader_kwargs = self.data_loader_kwargs.copy()
-            if len(self.val_idx < 5000):
-                data_loader_kwargs.update({'batch_size': len(self.val_idx)})
-            else:
-                data_loader_kwargs.update({'batch_size': 2048})
-            return AnnDataLoader(
-                self.adata,
-                indices=self.val_idx,
-                shuffle=True,
-                pin_memory=self.pin_memory,
-                **data_loader_kwargs,
-            )
-        else:
-            pass
-
-    def test_dataloader(self):
-        if len(self.test_idx) > 0:
-            return AnnDataLoader(
-                self.adata,
-                indices=self.test_idx,
-                shuffle=True,
-                pin_memory=self.pin_memory,
-                **self.data_loader_kwargs,
-            )
-        else:
-            pass

@@ -1,13 +1,9 @@
-from collections import defaultdict
 from typing import Union
 
 import torch
-import torch.nn as nn
 from torch.optim.lr_scheduler import StepLR
 
-from scvi._compat import Literal
 from scvi.module.base import BaseModuleClass
-from scvi.nn import FCLayers
 from scvi.train import TrainingPlan
 
 import numpy as np
@@ -52,11 +48,6 @@ class CPATrainingPlan(TrainingPlan):
         self.n_epochs_warmup = n_epochs_warmup if n_epochs_warmup is not None else 0
 
         self.covars_encoder = covars_to_ncovars
-
-        # adversarial_models_kwargs = dict(
-        #     n_hidden=adversary_width,
-        #     n_layers=adversary_depth,
-        # )
 
         self.autoencoder_wd = autoencoder_wd
         self.autoencoder_lr = autoencoder_lr
