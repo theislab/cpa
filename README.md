@@ -23,6 +23,6 @@ If you have a question or new architecture or a model that could be integrated i
 post an [issue](https://github.com/theislab/cpa/issues/new)
 
 
-##### Acknowledgment
-This code is based on early implementatiom by [Pierre Boyeau](https://github.com/PierreBoyeau) using [scvi-tools](https://scvi-tools.org/).
+###### Acknowledgment
+This code is inspired by an early implementatiom by [Pierre Boyeau](https://github.com/PierreBoyeau) using [scvi-tools](https://scvi-tools.org/).
 
