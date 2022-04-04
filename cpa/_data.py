@@ -20,7 +20,7 @@ class AnnDataSplitter(DataSplitter):
         self.data_loader_kwargs = kwargs
         self.use_gpu = use_gpu
         self.train_idx = train_indices
-        self.valid_idx = valid_indices
+        self.val_idx = valid_indices
         self.test_idx = test_indices
 
     def setup(self, stage: Optional[str] = None):
@@ -42,7 +42,7 @@ class AnnDataSplitter(DataSplitter):
             pass
 
     def val_dataloader(self):
-        if len(self.valid_idx) > 0:
+        if len(self.val_idx) > 0:
             data_loader_kwargs = self.data_loader_kwargs.copy()
             # if len(self.valid_indices < 4096):
             #     data_loader_kwargs.update({'batch_size': len(self.valid_indices)})
@@ -50,7 +50,7 @@ class AnnDataSplitter(DataSplitter):
             #     data_loader_kwargs.update({'batch_size': 2048})
             return AnnDataLoader(
                 self.adata,
-                indices=self.valid_idx,
+                indices=self.val_idx,
                 shuffle=True,
                 pin_memory=self.pin_memory,
                 **data_loader_kwargs,
