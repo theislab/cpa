@@ -307,7 +307,11 @@ class CPA(BaseModelClass):
                                     verbose=False,
                                     mode='max',
                                     )
-        trainer_kwargs['callbacks'] = [es_callback]
+
+        if 'callbacks' in trainer_kwargs.keys() and isinstance(trainer_kwargs.get('callbacks'), list):
+            trainer_kwargs['callbacks'] += [es_callback]
+        else:
+            trainer_kwargs['callbacks'] = [es_callback]
 
         if save_path is None:
             save_path = './'
