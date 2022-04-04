@@ -19,9 +19,9 @@ class AnnDataSplitter(DataSplitter):
         super().__init__(adata)
         self.data_loader_kwargs = kwargs
         self.use_gpu = use_gpu
-        self.train_indices = train_indices
-        self.valid_indices = valid_indices
-        self.test_indices = test_indices
+        self.train_idx = train_indices
+        self.valid_idx = valid_indices
+        self.test_idx = test_indices
 
     def setup(self, stage: Optional[str] = None):
         gpus, self.device = parse_use_gpu_arg(self.use_gpu, return_device=True)
@@ -30,10 +30,10 @@ class AnnDataSplitter(DataSplitter):
         )
 
     def train_dataloader(self):
-        if len(self.train_indices) > 0:
+        if len(self.train_idx) > 0:
             return AnnDataLoader(
                 self.adata,
-                indices=self.train_indices,
+                indices=self.train_idx,
                 shuffle=True,
                 pin_memory=self.pin_memory,
                 **self.data_loader_kwargs,
@@ -42,15 +42,15 @@ class AnnDataSplitter(DataSplitter):
             pass
 
     def val_dataloader(self):
-        if len(self.valid_indices) > 0:
+        if len(self.valid_idx) > 0:
             data_loader_kwargs = self.data_loader_kwargs.copy()
-            if len(self.valid_indices < 4096):
-                data_loader_kwargs.update({'batch_size': len(self.valid_indices)})
-            else:
-                data_loader_kwargs.update({'batch_size': 2048})
+            # if len(self.valid_indices < 4096):
+            #     data_loader_kwargs.update({'batch_size': len(self.valid_indices)})
+            # else:
+            #     data_loader_kwargs.update({'batch_size': 2048})
             return AnnDataLoader(
                 self.adata,
-                indices=self.valid_indices,
+                indices=self.valid_idx,
                 shuffle=True,
                 pin_memory=self.pin_memory,
                 **data_loader_kwargs,
@@ -59,10 +59,10 @@ class AnnDataSplitter(DataSplitter):
             pass
 
     def test_dataloader(self):
-        if len(self.test_indices) > 0:
+        if len(self.test_idx) > 0:
             return AnnDataLoader(
                 self.adata,
-                indices=self.test_indices,
+                indices=self.test_idx,
                 shuffle=True,
                 pin_memory=self.pin_memory,
                 **self.data_loader_kwargs,
