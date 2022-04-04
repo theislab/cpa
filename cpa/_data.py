@@ -29,6 +29,18 @@ class AnnDataSplitter(DataSplitter):
             True if (settings.dl_pin_memory_gpu_training and gpus != 0) else False
         )
 
+    def train_dataloader(self):
+        if len(self.train_indices) > 0:
+            return AnnDataLoader(
+                self.adata,
+                indices=self.train_indices,
+                shuffle=True,
+                pin_memory=self.pin_memory,
+                **self.data_loader_kwargs,
+            )
+        else:
+            pass
+
     def val_dataloader(self):
         if len(self.valid_indices) > 0:
             data_loader_kwargs = self.data_loader_kwargs.copy()
