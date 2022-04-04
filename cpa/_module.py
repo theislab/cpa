@@ -13,6 +13,7 @@ from scvi.nn import Encoder, FCLayers
 from scvi.module import Classifier
 from scvi import settings
 
+from ._metrics import entropy_batch_mixing, knn_purity
 from ._utils import _CE_CONSTANTS, DecoderNormal, DrugNetwork, VanillaEncoder
 
 import numpy as np
@@ -379,57 +380,62 @@ class CPAModule(BaseModuleClass):
         else:
             drug_names = tensors['drug_name'].detach().cpu().numpy()
 
-        classifier = LogisticRegression(solver="liblinear",
-                                        multi_class="auto",
-                                        max_iter=10000)
+        # classifier = LogisticRegression(solver="liblinear",
+        #                                 multi_class="auto",
+        #                                 max_iter=10000)
+        #
+        # pert_basal_scores = cross_val_score(classifier,
+        #                                     StandardScaler().fit_transform(latent_basal),
+        #                                     drug_names.ravel(),
+        #                                     scoring=make_scorer(balanced_accuracy_score),
+        #                                     cv=min(5, len(np.unique(drug_names.ravel()))),
+        #                                     n_jobs=-1).mean()
 
-        pert_basal_scores = cross_val_score(classifier,
-                                            StandardScaler().fit_transform(latent_basal),
-                                            drug_names.ravel(),
-                                            scoring=make_scorer(balanced_accuracy_score),
-                                            cv=min(5, len(np.unique(drug_names.ravel()))),
-                                            n_jobs=-1).mean()
-
-        for covar, unique_covars in self.covars_encoder.items():
-            if len(unique_covars) > 1:
-                target_covars = tensors[f'{covar}'].detach().cpu().numpy()
-                classifier = LogisticRegression(solver="liblinear",
-                                                multi_class="auto",
-                                                max_iter=10000)
-
-                pert_basal_scores += cross_val_score(classifier,
-                                                     StandardScaler().fit_transform(latent_basal),
-                                                     target_covars.ravel(),
-                                                     scoring=make_scorer(balanced_accuracy_score),
-                                                     cv=min(5, len(np.unique(target_covars.ravel()))),
-                                                     n_jobs=-1).mean()
-
-        classifier = LogisticRegression(solver="liblinear",
-                                        multi_class="auto",
-                                        max_iter=10000)
-
-        pert_scores = cross_val_score(classifier,
-                                      StandardScaler().fit_transform(latent),
-                                      drug_names.ravel(),
-                                      scoring=make_scorer(balanced_accuracy_score),
-                                      cv=5,
-                                      n_jobs=-1).mean()
+        knn_basal = knn_purity(latent_basal, drug_names.ravel())
 
         for covar, unique_covars in self.covars_encoder.items():
             if len(unique_covars) > 1:
                 target_covars = tensors[f'{covar}'].detach().cpu().numpy()
-                classifier = LogisticRegression(solver="liblinear",
-                                                multi_class="auto",
-                                                max_iter=10000)
+                # classifier = LogisticRegression(solver="liblinear",
+                #                                 multi_class="auto",
+                #                                 max_iter=10000)
+                #
+                # pert_basal_scores += cross_val_score(classifier,
+                #                                      StandardScaler().fit_transform(latent_basal),
+                #                                      target_covars.ravel(),
+                #                                      scoring=make_scorer(balanced_accuracy_score),
+                #                                      cv=min(5, len(np.unique(target_covars.ravel()))),
+                #                                      n_jobs=-1).mean()
+                knn_basal += knn_purity(latent_basal, target_covars.ravel())
 
-                pert_scores += cross_val_score(classifier,
-                                               StandardScaler().fit_transform(latent),
-                                               target_covars.ravel(),
-                                               scoring=make_scorer(balanced_accuracy_score),
-                                               cv=min(5, len(np.unique(target_covars.ravel()))),
-                                               n_jobs=-1).mean()
+        # classifier = LogisticRegression(solver="liblinear",
+        #                                 multi_class="auto",
+        #                                 max_iter=10000)
+        #
+        # pert_scores = cross_val_score(classifier,
+        #                               StandardScaler().fit_transform(latent),
+        #                               drug_names.ravel(),
+        #                               scoring=make_scorer(balanced_accuracy_score),
+        #                               cv=5,
+        #                               n_jobs=-1).mean()
+        knn_after = knn_purity(latent, drug_names.ravel())
 
-        return pert_basal_scores, pert_scores
+        for covar, unique_covars in self.covars_encoder.items():
+            if len(unique_covars) > 1:
+                target_covars = tensors[f'{covar}'].detach().cpu().numpy()
+                # classifier = LogisticRegression(solver="liblinear",
+                #                                 multi_class="auto",
+                #                                 max_iter=10000)
+                #
+                # pert_scores += cross_val_score(classifier,
+                #                                StandardScaler().fit_transform(latent),
+                #                                target_covars.ravel(),
+                #                                scoring=make_scorer(balanced_accuracy_score),
+                #                                cv=min(5, len(np.unique(target_covars.ravel()))),
+                #                                n_jobs=-1).mean()
+                knn_after += knn_purity(latent, target_covars.ravel())
+
+        return knn_basal, knn_after
 
     def get_expression(self, tensors, **inference_kwargs):
         """Computes gene expression means and std.
