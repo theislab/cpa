@@ -89,13 +89,23 @@ class CPATrainingPlan(TrainingPlan):
             self.epoch_history[f'penalty_{covar}'] = []
 
     def configure_optimizers(self):
-        optimizer_autoencoder = torch.optim.Adam(
-            list(filter(lambda p: p.requires_grad, self.module.encoder.parameters())) +
-            list(filter(lambda p: p.requires_grad, self.module.decoder.parameters())) +
-            list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_embedding.parameters())) +
-            list(filter(lambda p: p.requires_grad, self.module.covars_embedding.parameters())),
-            lr=self.autoencoder_lr,
-            weight_decay=self.autoencoder_wd)
+        if hasattr(self.module.drug_network, 'drug_encoder'):
+            optimizer_autoencoder = torch.optim.Adam(
+                list(filter(lambda p: p.requires_grad, self.module.encoder.parameters())) +
+                list(filter(lambda p: p.requires_grad, self.module.decoder.parameters())) +
+                list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_embedding.parameters())) +
+                list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_encoder.parameters())) +
+                list(filter(lambda p: p.requires_grad, self.module.covars_embedding.parameters())),
+                lr=self.autoencoder_lr,
+                weight_decay=self.autoencoder_wd)
+        else:
+            optimizer_autoencoder = torch.optim.Adam(
+                list(filter(lambda p: p.requires_grad, self.module.encoder.parameters())) +
+                list(filter(lambda p: p.requires_grad, self.module.decoder.parameters())) +
+                list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_embedding.parameters())) +
+                list(filter(lambda p: p.requires_grad, self.module.covars_embedding.parameters())),
+                lr=self.autoencoder_lr,
+                weight_decay=self.autoencoder_wd)
 
         optimizer_adversaries = torch.optim.Adam(
             list(filter(lambda p: p.requires_grad, self.module.drugs_classifier.parameters())) +
