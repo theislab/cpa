@@ -26,7 +26,7 @@ packages = [
     { include = "cpa" },
 ]
 readme = "README.md"
-version = "0.2.9"
+version = "0.2.10"
 
 [tool.poetry.dependencies]
 adjustText = { version = "*", optional = true }
