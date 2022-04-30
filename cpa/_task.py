@@ -191,7 +191,7 @@ class CPATrainingPlan(TrainingPlan):
             )
             loss = reconstruction_loss
             if self.kl_coeff is not None:
-                loss += self.kl_coeff * kl_loss
+                loss += self.kl_coeff * kl_loss.mean()
             self.manual_backward(loss)
             opt.step()
             opt_dosers.step()
