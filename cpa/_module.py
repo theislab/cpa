@@ -391,7 +391,7 @@ class CPAModule(BaseModuleClass):
         #                                     cv=min(5, len(np.unique(drug_names.ravel()))),
         #                                     n_jobs=-1).mean()
 
-        knn_basal = knn_purity(latent_basal, drug_names.ravel(), n_neighbors=min(drug_names.shape[0], 30))
+        knn_basal = knn_purity(latent_basal, drug_names.ravel(), n_neighbors=min(drug_names.shape[0] - 1, 30))
 
         for covar, unique_covars in self.covars_encoder.items():
             if len(unique_covars) > 1:
@@ -407,7 +407,7 @@ class CPAModule(BaseModuleClass):
                 #                                      cv=min(5, len(np.unique(target_covars.ravel()))),
                 #                                      n_jobs=-1).mean()
                 knn_basal += knn_purity(latent_basal, target_covars.ravel(),
-                                        n_neighbors=min(target_covars.shape[0], 30))
+                                        n_neighbors=min(target_covars.shape[0] - 1, 30))
 
         # classifier = LogisticRegression(solver="liblinear",
         #                                 multi_class="auto",
@@ -419,7 +419,7 @@ class CPAModule(BaseModuleClass):
         #                               scoring=make_scorer(balanced_accuracy_score),
         #                               cv=5,
         #                               n_jobs=-1).mean()
-        knn_after = knn_purity(latent, drug_names.ravel(), n_neighbors=min(drug_names.shape[0], 30))
+        knn_after = knn_purity(latent, drug_names.ravel(), n_neighbors=min(drug_names.shape[0] - 1, 30))
 
         for covar, unique_covars in self.covars_encoder.items():
             if len(unique_covars) > 1:
@@ -434,7 +434,7 @@ class CPAModule(BaseModuleClass):
                 #                                scoring=make_scorer(balanced_accuracy_score),
                 #                                cv=min(5, len(np.unique(target_covars.ravel()))),
                 #                                n_jobs=-1).mean()
-                knn_after += knn_purity(latent, target_covars.ravel(), n_neighbors=min(target_covars.shape[0], 30))
+                knn_after += knn_purity(latent, target_covars.ravel(), n_neighbors=min(target_covars.shape[0] - 1, 30))
 
         return knn_basal, knn_after
 
