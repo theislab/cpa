@@ -23,12 +23,12 @@ class CPATrainingPlan(TrainingPlan):
             penalty_adversary: float = 60,
             dosers_lr=4e-3,
             dosers_wd=1e-7,
-            kl_weight=None,
             adversary_lr=3e-4,
             adversary_wd=4e-7,
             autoencoder_wd=4e-7,
             step_size_lr: int = 45,
             batch_size: int = 256,
+            variational: bool = False,
     ):
         """Training plan for the CPA model"""
         super().__init__(
@@ -58,14 +58,14 @@ class CPATrainingPlan(TrainingPlan):
         self.reg_adversary = reg_adversary
         self.penalty_adversary = penalty_adversary
 
-        self.kl_coeff = kl_weight
-
         self.dosers_lr = dosers_lr
         self.dosers_wd = dosers_wd
 
         self.step_size_lr = step_size_lr
 
         self.batch_size = batch_size
+
+        self.variational = variational
 
         self.automatic_optimization = False
         self.iter_count = 0
@@ -161,8 +161,8 @@ class CPATrainingPlan(TrainingPlan):
                 adv_results = self.module.adversarial_loss(tensors=batch, latent_basal=latent_basal)
 
                 loss = reconstruction_loss - self.reg_adversary * adv_results['adv_loss']
-                if self.kl_coeff is not None and self.kl_coeff != 0.0:
-                    loss += self.kl_coeff * kl_loss.mean()
+                if self.variational:
+                    loss += self.kl_weight * kl_loss.mean()
                 self.manual_backward(loss)
                 opt.step()
                 opt_dosers.step()
@@ -190,8 +190,8 @@ class CPATrainingPlan(TrainingPlan):
                 generative_outputs=gen_outputs,
             )
             loss = reconstruction_loss
-            if self.kl_coeff is not None:
-                loss += self.kl_coeff * kl_loss.mean()
+            if self.variational:
+                loss += self.kl_weight * kl_loss.mean()
             self.manual_backward(loss)
             opt.step()
             opt_dosers.step()

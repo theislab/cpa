@@ -1,5 +1,6 @@
 import logging
 import os
+import pickle
 import warnings
 from typing import Optional, Sequence, Union, List
 
@@ -74,9 +75,9 @@ class CPA(BaseModelClass):
                             split_key='split',
                             )
     """
-    covars_encoder: dict
-    drug_encoder: dict
-    combinatorial: bool
+    covars_encoder: dict = None
+    drug_encoder: dict = None
+    combinatorial: bool = None
 
     def __init__(
             self,
@@ -91,9 +92,9 @@ class CPA(BaseModelClass):
             **hyper_params,
     ):
         super().__init__(adata)
-        self.drug_encoder = self.drug_encoder
-        self.covars_encoder = self.covars_encoder
-        self.combinatorial = self.combinatorial
+        self.drug_encoder = CPA.drug_encoder
+        self.covars_encoder = CPA.covars_encoder
+        self.combinatorial = CPA.combinatorial
 
         self.n_genes = self.summary_stats["n_vars"]
         self.n_drugs = len(self.drug_encoder)
@@ -227,6 +228,12 @@ class CPA(BaseModelClass):
         CPA.covars_encoder = covars_encoder
         CPA.drug_encoder = drug_encoder
         CPA.combinatorial = combinatorial
+
+        adata.uns['_scvi']['others'] = {
+            'drug_encoder': CPA.drug_encoder,
+            'covars_encoder': CPA.covars_encoder,
+            'combinatorial': CPA.combinatorial
+        }
 
     def train(
             self,
@@ -518,6 +525,11 @@ class CPA(BaseModelClass):
 
     @classmethod
     def load(cls, dir_path: str, adata: Optional[AnnData] = None, use_gpu: Optional[Union[str, int, bool]] = None):
+        attrs = pickle.load(open(os.path.join(dir_path, 'attr.pkl'), 'rb'))
+        CPA.drug_encoder = attrs['scvi_setup_dict_']['others']['drug_encoder']
+        CPA.covars_encoder = attrs['scvi_setup_dict_']['others']['covars_encoder']
+        CPA.combinatorial = attrs['scvi_setup_dict_']['others']['combinatorial']
+
         model = super().load(dir_path, adata, use_gpu)
 
         try:

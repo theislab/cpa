@@ -117,7 +117,7 @@ class CPAModule(BaseModuleClass):
 
         # Decoder components
         if loss_ae in ["gauss", 'mse']:
-            self.decoder = DecoderNormal(
+            self. decoder = DecoderNormal(
                 n_input=n_latent,
                 n_output=n_genes,
                 n_hidden=autoencoder_width,
