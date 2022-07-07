@@ -1,19 +1,20 @@
 import logging
 import os
-import pickle
-import warnings
 from typing import Optional, Sequence, Union, List
 
 import numpy as np
 import pandas as pd
 import torch
 from pytorch_lightning.callbacks import EarlyStopping
-from scvi.data import setup_anndata, register_tensor_from_anndata, transfer_anndata_setup, get_from_registry
-from scvi.data._anndata import _check_anndata_setup_equivalence
-from scvi.data._utils import _check_nonnegative_integers
+from scvi.data import AnnDataManager
 from scvi.dataloaders import DataSplitter
 from torch.nn import functional as F
-from scvi import _CONSTANTS
+from scvi.data.fields import (
+    LayerField,
+    CategoricalObsField,
+    NumericalJointObsField,
+    ObsmField,
+)
 
 from anndata import AnnData
 from scvi.model.base import BaseModelClass
@@ -22,7 +23,8 @@ from scvi.train._callbacks import SaveBestState
 from scvi.utils import setup_anndata_dsp
 from tqdm import tqdm
 
-from ._module import CPAModule, _CE_CONSTANTS
+from ._module import CPAModule
+from ._utils import REGISTRY_KEYS
 from ._task import CPATrainingPlan
 from ._data import AnnDataSplitter
 
@@ -77,7 +79,6 @@ class CPA(BaseModelClass):
     """
     covars_encoder: dict = None
     drug_encoder: dict = None
-    combinatorial: bool = None
 
     def __init__(
             self,
@@ -94,9 +95,8 @@ class CPA(BaseModelClass):
         super().__init__(adata)
         self.drug_encoder = CPA.drug_encoder
         self.covars_encoder = CPA.covars_encoder
-        self.combinatorial = CPA.combinatorial
 
-        self.n_genes = self.summary_stats["n_vars"]
+        self.n_genes = adata.n_vars
         self.n_drugs = len(self.drug_encoder)
         self.split_key = split_key
 
@@ -112,7 +112,6 @@ class CPA(BaseModelClass):
             n_latent=n_latent,
             loss_ae=loss_ae,
             doser_type=doser_type,
-            combinatorial=self.combinatorial,
             **hyper_params,
         ).float()
 
@@ -132,17 +131,17 @@ class CPA(BaseModelClass):
 
         self.epoch_history = None
 
-    @staticmethod
+    @classmethod
     @setup_anndata_dsp.dedent
     def setup_anndata(
+            cls,
             adata: AnnData,
             drug_key: str,
             dose_key: str,
             control_key: str,
-            combinatorial=True,
             categorical_covariate_keys: Optional[List[str]] = None,
             continuous_covariate_keys: Optional[List[str]] = None,
-            copy: bool = False,
+            **kwargs,
     ):
         """
         Annotation Data setup function
@@ -157,83 +156,62 @@ class CPA(BaseModelClass):
 
         control_key
 
-        combinatorial
-
         categorical_covariate_keys
 
         continuous_covariate_keys
 
-        copy
-
-        Returns
-        -------
-        A tuple of (adata, drug_encoder, covars_encoder)
-
-        adata: processed adata
-        drug_encoder: Label Encoder for drug labels
-        covars_encoder: Label Encoder for categorical covariates
-
         """
-        _CE_CONSTANTS.DRUG_KEY = drug_key
-        _CE_CONSTANTS.COVARS_KEYS = categorical_covariate_keys
-        _CE_CONSTANTS.DOSE_KEY = dose_key
-        _CE_CONSTANTS.CONTROL_KEY = control_key
+        REGISTRY_KEYS.DRUG_KEY = drug_key
+        REGISTRY_KEYS.COVARS_KEYS = categorical_covariate_keys
+        REGISTRY_KEYS.DOSE_KEY = dose_key
+        REGISTRY_KEYS.CONTROL_KEY = control_key
 
-        setup_anndata(
-            adata,
-            batch_key=None,
-            labels_key=None,
-            layer=None,
-            categorical_covariate_keys=None,
-            continuous_covariate_keys=continuous_covariate_keys,
-            copy=copy,
+        drugs = adata.obs[drug_key]
+        dosages = adata.obs[dose_key].astype(str)
+
+        # get unique drugs
+        drugs_names_unique = set()
+        for d in np.unique(drugs):
+            [drugs_names_unique.add(i) for i in d.split("+")]
+        drugs_names_unique = np.array(list(drugs_names_unique))
+
+        drugs_obsm = np.zeros((adata.n_obs, len(drugs_names_unique)))
+        for i in tqdm(range(adata.n_obs)):
+            cell_drugs = np.isin(drugs_names_unique, drugs[i].split('+'))
+            cell_doses = np.array(dosages[i].split("+")).astype(np.float32)
+            drugs_obsm[i, cell_drugs] = cell_doses
+
+        adata.obsm['drugs_doses'] = np.array(drugs_obsm)
+
+        drug_encoder = {drug: i for i, drug in
+                        enumerate(drugs_names_unique)}
+
+        setup_method_args = cls._get_setup_method_args(**locals())
+        anndata_fields = \
+            [
+                LayerField(registry_key=REGISTRY_KEYS.X_KEY, layer=None, is_count_data=False),
+                NumericalJointObsField(REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys),
+                ObsmField('drugs_doses', 'drugs_doses', is_count_data=False, correct_data_format=True)
+            ] + [CategoricalObsField(registry_key=covar, obs_key=covar) for covar in categorical_covariate_keys]
+
+        adata_manager = AnnDataManager(
+            fields=anndata_fields, setup_method_args=setup_method_args
         )
-
-        if not combinatorial:
-            register_tensor_from_anndata(adata, "drug_name", "obs", drug_key, is_categorical=True)
-            register_tensor_from_anndata(adata, "dose_value", "obs", dose_key, is_categorical=False)
-            register_tensor_from_anndata(adata, control_key, "obs", control_key, is_categorical=True)
-
-        if combinatorial:
-            drugs = adata.obs[drug_key]
-            dosages = adata.obs[dose_key].astype(str)
-
-            # get unique drugs
-            drugs_names_unique = set()
-            for d in np.unique(drugs):
-                [drugs_names_unique.add(i) for i in d.split("+")]
-            drugs_names_unique = np.array(list(drugs_names_unique))
-
-            drugs_obsm = np.zeros((adata.n_obs, len(drugs_names_unique)))
-            for i in tqdm(range(adata.n_obs)):
-                cell_drugs = np.isin(drugs_names_unique, drugs[i].split('+'))
-                cell_doses = np.array(dosages[i].split("+")).astype(np.float32)
-                drugs_obsm[i, cell_drugs] = cell_doses
-
-            adata.obsm['drugs_doses'] = np.array(drugs_obsm)
-
-            register_tensor_from_anndata(adata, "drugs_doses", "obsm", "drugs_doses")
-            drug_encoder = {drug: i for i, drug in
-                            enumerate(drugs_names_unique)}
-        else:
-            drug_encoder = {drug: i for i, drug in
-                            enumerate(adata.uns['_scvi']['categorical_mappings'][f'{drug_key}_scvi']['mapping'])}
+        adata_manager.register_fields(adata, **kwargs)
+        cls.register_manager(adata_manager)
 
         covars_encoder = {}
         for covar in categorical_covariate_keys:
-            register_tensor_from_anndata(adata, covar, "obs", covar, is_categorical=True)
-            covars_encoder[covar] = {covar_value: index for index, covar_value in enumerate(
-                list(adata.uns['_scvi']['categorical_mappings'][f'{covar}_scvi']['mapping']))}
+            covars_encoder[covar] = {c: i for i, c in enumerate(
+                adata_manager.registry['field_registries'][covar]['state_registry']['categorical_mapping'])}
 
         CPA.covars_encoder = covars_encoder
         CPA.drug_encoder = drug_encoder
-        CPA.combinatorial = combinatorial
 
-        adata.uns['_scvi']['others'] = {
-            'drug_encoder': CPA.drug_encoder,
-            'covars_encoder': CPA.covars_encoder,
-            'combinatorial': CPA.combinatorial
-        }
+        # adata.uns['_scvi']['others'] = {
+        #     'drug_encoder': CPA.drug_encoder,
+        #     'covars_encoder': CPA.covars_encoder,
+        # }
 
     def train(
             self,
@@ -284,7 +262,7 @@ class CPA(BaseModelClass):
         )
         if manual_splitting:
             data_splitter = AnnDataSplitter(
-                self.adata,
+                self.adata_manager,
                 train_indices=self.train_indices,
                 valid_indices=self.valid_indices,
                 test_indices=self.test_indices,
@@ -293,15 +271,12 @@ class CPA(BaseModelClass):
             )
         else:
             data_splitter = DataSplitter(
-                self.adata,
+                self.adata_manager,
                 train_size=train_size,
                 validation_size=validation_size,
                 batch_size=batch_size,
                 use_gpu=use_gpu,
             )
-
-        if self.module.variational:
-            assert 'kl_weight' in plan_kwargs.keys() and plan_kwargs.get('kl_weight') is not None
 
         self.training_plan = CPATrainingPlan(self.module, self.covars_encoder, **plan_kwargs)
         trainer_kwargs["early_stopping"] = False
@@ -433,39 +408,6 @@ class CPA(BaseModelClass):
 
         return pred_adata_mean, pred_adata_var
 
-    def _validate_anndata(
-            self, adata: Optional[AnnData] = None, copy_if_view: bool = True
-    ):
-        """Validate anndata has been properly registered, transfer if necessary."""
-        if adata is None:
-            adata = self.adata
-        if adata.is_view:
-            if copy_if_view:
-                logger.info("Received view of anndata, making copy.")
-                adata = adata.copy()
-            else:
-                raise ValueError("Please run `adata = adata.copy()`")
-
-        if "_scvi" not in adata.uns_keys():
-            logger.info(
-                "Input adata not setup with scvi. "
-                + "attempting to transfer anndata setup"
-            )
-            transfer_anndata_setup(self.scvi_setup_dict_, adata, extend_categories=True)
-        is_nonneg_int = _check_nonnegative_integers(
-            get_from_registry(adata, _CONSTANTS.X_KEY)
-        )
-        if not is_nonneg_int:
-            warnings.warn(
-                "Make sure the registered X field in anndata contains unnormalized count data."
-            )
-
-        needs_transfer = _check_anndata_setup_equivalence(self.scvi_setup_dict_, adata)
-        if needs_transfer:
-            transfer_anndata_setup(self.scvi_setup_dict_, adata, extend_categories=True)
-
-        return adata
-
     @torch.no_grad()
     def get_drug_embeddings(self, doses=1.0, drug: Optional[str] = None):
         """Computes all drug drug
@@ -521,16 +463,13 @@ class CPA(BaseModelClass):
             self.epoch_history = pd.DataFrame().from_dict(self.training_plan.epoch_history)
             self.epoch_history.to_csv(os.path.join(dir_path, 'history.csv'), index=False)
 
-        return super().save(dir_path, overwrite, save_anndata, **anndata_write_kwargs)
+        return super().save(dir_path=dir_path, overwrite=overwrite, save_anndata=save_anndata, **anndata_write_kwargs)
 
     @classmethod
     def load(cls, dir_path: str, adata: Optional[AnnData] = None, use_gpu: Optional[Union[str, int, bool]] = None):
-        attrs = pickle.load(open(os.path.join(dir_path, 'attr.pkl'), 'rb'))
-        CPA.drug_encoder = attrs['scvi_setup_dict_']['others']['drug_encoder']
-        CPA.covars_encoder = attrs['scvi_setup_dict_']['others']['covars_encoder']
-        CPA.combinatorial = attrs['scvi_setup_dict_']['others']['combinatorial']
-
         model = super().load(dir_path, adata, use_gpu)
+        CPA.covars_encoder = model.covars_encoder
+        CPA.drug_encoder = model.drug_encoder
 
         try:
             model.epoch_history = pd.read_csv(os.path.join(dir_path, 'history.csv'))

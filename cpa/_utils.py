@@ -2,26 +2,24 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from scvi.dataloaders import DataSplitter
-from scvi.model._utils import parse_use_gpu_arg
-from scvi.dataloaders._ann_dataloader import AnnDataLoader
-from scvi import settings
-
-from typing import Optional, Union
-
-from anndata import AnnData
-
 from scvi.nn import FCLayers
 from torch.distributions import Normal
 
 
-class _CE_CONSTANTS:
-    X_KEY = "X"
-    PERTURBATIONS = "drugs_doses"
-    DRUG_KEY = None
-    DOSE_KEY = None
-    CONTROL_KEY = None
-    COVARS_KEYS = []
+class _REGISTRY_KEYS:
+    X_KEY: str = "X"
+    PERTURBATIONS: str = "drugs_doses"
+    CAT_COVS_KEY: str = "extra_categorical_covs"
+    CONT_COVS_KEY: str = "extra_continuous_covs"
+    INDICES_KEY: str = "ind_x"
+    SIZE_FACTOR_KEY: str = "size_factor"
+    DRUG_KEY: str = None
+    DOSE_KEY: str = None
+    CONTROL_KEY: str = None
+    COVARS_KEYS: str = []
+
+
+REGISTRY_KEYS = _REGISTRY_KEYS()
 
 
 class VanillaEncoder(nn.Module):

@@ -1,7 +1,7 @@
 from typing import Optional
 
-from anndata import AnnData
 from scvi import settings
+from scvi.data import AnnDataManager
 from scvi.dataloaders import DataSplitter, AnnDataLoader
 from scvi.model._utils import parse_use_gpu_arg
 
@@ -9,14 +9,14 @@ from scvi.model._utils import parse_use_gpu_arg
 class AnnDataSplitter(DataSplitter):
     def __init__(
             self,
-            adata: AnnData,
+            adata_manager: AnnDataManager,
             train_indices,
             valid_indices,
             test_indices,
             use_gpu: bool = False,
             **kwargs,
     ):
-        super().__init__(adata)
+        super().__init__(adata_manager)
         self.data_loader_kwargs = kwargs
         self.use_gpu = use_gpu
         self.train_idx = train_indices
@@ -32,7 +32,7 @@ class AnnDataSplitter(DataSplitter):
     def train_dataloader(self):
         if len(self.train_idx) > 0:
             return AnnDataLoader(
-                self.adata,
+                self.adata_manager,
                 indices=self.train_idx,
                 shuffle=True,
                 pin_memory=self.pin_memory,
@@ -49,7 +49,7 @@ class AnnDataSplitter(DataSplitter):
             # else:
             #     data_loader_kwargs.update({'batch_size': 2048})
             return AnnDataLoader(
-                self.adata,
+                self.adata_manager,
                 indices=self.val_idx,
                 shuffle=True,
                 pin_memory=self.pin_memory,
@@ -61,7 +61,7 @@ class AnnDataSplitter(DataSplitter):
     def test_dataloader(self):
         if len(self.test_idx) > 0:
             return AnnDataLoader(
-                self.adata,
+                self.adata_manager,
                 indices=self.test_idx,
                 shuffle=True,
                 pin_memory=self.pin_memory,

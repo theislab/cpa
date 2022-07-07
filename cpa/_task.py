@@ -270,7 +270,7 @@ class CPATrainingPlan(TrainingPlan):
         results.update({'disent_basal': disent_basal})
         results.update({'disent_after': disent_after})
         results.update({'recon_loss': reconstruction_loss.item()})
-        results.update({'cpa_metric': r2_mean + 1.0 + len(
+        results.update({'cpa_metric': r2_mean + r2_var + 1.0 + len(
             [covar for covar, unique_covars in self.covars_encoder.items() if
              len(unique_covars) > 1]) - disent_basal + disent_after})
 

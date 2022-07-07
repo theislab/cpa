@@ -12,7 +12,7 @@ from sklearn.metrics import r2_score
 from sklearn.metrics.pairwise import cosine_distances, euclidean_distances
 
 from ._model import CPA
-from ._utils import _CE_CONSTANTS
+from ._utils import REGISTRY_KEYS
 
 
 class ComPertAPI:
@@ -29,10 +29,10 @@ class ComPertAPI:
         model : ComPertModel
             Pre-trained ComPert model.
         """
-        self.perturbation_key = _CE_CONSTANTS.DRUG_KEY
-        self.dose_key = _CE_CONSTANTS.DOSE_KEY
-        self.covars_key = _CE_CONSTANTS.COVARS_KEYS
-        self.control_key = _CE_CONSTANTS.CONTROL_KEY
+        self.perturbation_key = REGISTRY_KEYS.DRUG_KEY
+        self.dose_key = REGISTRY_KEYS.DOSE_KEY
+        self.covars_key = REGISTRY_KEYS.COVARS_KEYS
+        self.control_key = REGISTRY_KEYS.CONTROL_KEY
 
         # self.min_dose = adata.obs[_CE_CONSTANTS.DOSE_KEY].min()
         # self.max_dose = adata.obs[_CE_CONSTANTS.DOSE_KEY].max()
