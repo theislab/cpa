@@ -173,7 +173,7 @@ class CPA(BaseModelClass):
         drugs_names_unique = set()
         for d in np.unique(drugs):
             [drugs_names_unique.add(i) for i in d.split("+")]
-        drugs_names_unique = np.array(list(drugs_names_unique))
+        drugs_names_unique = sorted(list(np.array(list(drugs_names_unique))))
 
         drugs_obsm = np.zeros((adata.n_obs, len(drugs_names_unique)))
         for i in tqdm(range(adata.n_obs)):
@@ -207,11 +207,6 @@ class CPA(BaseModelClass):
 
         CPA.covars_encoder = covars_encoder
         CPA.drug_encoder = drug_encoder
-
-        # adata.uns['_scvi']['others'] = {
-        #     'drug_encoder': CPA.drug_encoder,
-        #     'covars_encoder': CPA.covars_encoder,
-        # }
 
     def train(
             self,
