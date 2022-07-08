@@ -212,15 +212,19 @@ class CPAModule(BaseModuleClass):
             basal_distribution = None
             latent_basal = self.encoder(x_)
 
+        latent_treatment = self.drug_network(drugs, doses)
+
         latent_covariates = []
         for covar, _ in self.covars_encoder.items():
             latent_covar_i = self.covars_embedding[covar](covars_dict[covar].long())
             latent_covar_i = latent_covar_i.view(batch_size, self.n_latent).unsqueeze(0)  # 1, batch_size, n_latent
             latent_covariates.append(latent_covar_i)
 
-        latent_covariates = torch.cat(latent_covariates, 0).sum(0)  # Summing all covariates representations
-        latent_treatment = self.drug_network(drugs, doses)
-        latent = latent_basal + latent_covariates + latent_treatment
+        if len(latent_covariates) > 0:
+            latent_covariates = torch.cat(latent_covariates, 0).sum(0)  # Summing all covariates representations
+            latent = latent_basal + latent_treatment + latent_covariates
+        else:
+            latent = latent_basal + latent_treatment
 
         return dict(
             latent=latent,
@@ -344,14 +348,35 @@ class CPAModule(BaseModuleClass):
 
         x = tensors[REGISTRY_KEYS.X_KEY].detach().cpu().numpy()  # batch_size, n_genes
 
-        true_mean = x.mean(0)
-        pred_mean = pred_mean.mean(0)
+        batch_size = x.shape[0]
 
-        true_var = x.var(0)
-        pred_var = pred_var.mean(0)
+        drugs_doses = tensors['drugs_doses']  # (batch_size, n_drugs)
+        indices = (drugs_doses * torch.arange(drugs_doses.shape[1]).exp().view(1, -1).repeat(batch_size, 1).to(
+            drugs_doses.device)).sum(dim=1)
 
-        r2_mean = r2_score(true_mean, pred_mean)
-        r2_var = r2_score(true_var, pred_var)
+        for i, covar in enumerate(self.covars_encoder.keys()):
+            indices += tensors[covar].view(-1, )  # (batch_size,)
+
+        r2_mean = 0.0
+        r2_var = 0.0
+
+        unique_indices = indices.unique()
+        n_unique_indices = len(unique_indices)
+
+        for index in unique_indices:
+            index_mask = (indices == index).detach().cpu().numpy()
+            x_index = x[index_mask]
+            means_index = pred_mean[index_mask]
+            variances_index = pred_var[index_mask]
+
+            true_mean_index = x_index.mean(0)
+            pred_mean_index = means_index.mean(0)
+
+            true_var_index = x_index.var(0)
+            pred_var_index = variances_index.mean(0)
+
+            r2_mean += r2_score(true_mean_index, pred_mean_index) / n_unique_indices
+            r2_var += r2_score(true_var_index, pred_var_index) / n_unique_indices
 
         return r2_mean, r2_var
 
