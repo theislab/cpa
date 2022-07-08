@@ -20,7 +20,9 @@ class ComPertAPI:
     API for CPA model to make it compatible with scanpy.
     """
 
-    def __init__(self, adata: AnnData, model: CPA):
+    def __init__(self, adata: AnnData, model: CPA,
+                 de_genes_uns_key: str = 'rank_genes_groups_cov',
+                 pert_category_key: str = 'cov_drug_dose_name'):
         """
         Parameters
         ----------
@@ -41,7 +43,10 @@ class ComPertAPI:
         self.adata = adata
         self.var_names = adata.var_names
 
-        self.de_genes = adata.uns['rank_genes_groups_cov']
+        if de_genes_uns_key in adata.uns.keys():
+            self.de_genes = adata.uns[de_genes_uns_key]
+        else:
+            self.de_genes = None
 
         self.split_key = model.split_key
         data_types = list(np.unique(adata.obs[self.split_key])) + ['all']
@@ -64,7 +69,7 @@ class ComPertAPI:
 
         self.seen_covars_perts = {}
         self.adatas = {}
-        self.pert_categories_key = 'cov_drug_dose_name'
+        self.pert_categories_key = pert_category_key
         for k in data_types:
             if k == 'all':
                 self.adatas[k] = adata.copy()
@@ -900,6 +905,7 @@ class ComPertAPI:
     def evaluate_r2(
             self,
             perturbations=None,
+            control_adata_key: str = 'test',
     ):
         """
         Measures different quality metrics about an ComPert `autoencoder`, when
@@ -919,7 +925,7 @@ class ComPertAPI:
                                        'R2_mean', 'R2_mean_DE', 'R2_var',
                                        'R2_var_DE', 'num_cells'])
 
-        control_adata = self.adatas['test'].copy()
+        control_adata = self.adatas[control_adata_key].copy()
         control_adata = control_adata[control_adata.obs[self.control_key] == 1]
 
         icond = 0
@@ -927,7 +933,10 @@ class ComPertAPI:
             # pert_category category contains: 'celltype_perturbation_dose' info
             *covs, drug, dose = pert_category.split('_')
             if drug in perturbations:
-                de_genes = self.de_genes[pert_category]
+                if self.de_genes:
+                    de_genes = self.de_genes[pert_category]
+                else:
+                    de_genes = list(self.adata.var_names)
                 true_adata = self.adata[self.adata.obs[self.pert_categories_key] == pert_category]
                 control_adata_ct = control_adata[control_adata.obs[self.covars_key[0]] == covs[0]]
 
