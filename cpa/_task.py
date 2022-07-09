@@ -221,7 +221,7 @@ class CPATrainingPlan(TrainingPlan):
         self.epoch_history['mode'].append('train')
 
         self.log("recon", self.epoch_history['recon_loss'][-1], prog_bar=True)
-        self.log("adv_loss", self.epoch_history['adv_loss'][-1], prog_bar=True)
+        # self.log("adv_loss", self.epoch_history['adv_loss'][-1], prog_bar=True)
         # self.log("penalty_adv", self.epoch_history['penalty_adv'][-1], prog_bar=True)
         # self.log("reg_mean", self.epoch_history['reg_mean'][-1], prog_bar=True)
         # self.log("reg_var", self.epoch_history['reg_var'][-1], prog_bar=True)
@@ -292,7 +292,7 @@ class CPATrainingPlan(TrainingPlan):
 
         self.log('val_recon', self.epoch_history['recon_loss'][-1], prog_bar=True)
         self.log('cpa_metric', np.mean([output['cpa_metric'] for output in outputs]), prog_bar=False)
-        self.log('val_reg_mean', self.epoch_history['reg_mean'][-1], prog_bar=False)
         self.log('val_disnt_basal', self.epoch_history['disent_basal'][-1], prog_bar=True)
         self.log('val_disnt_after', self.epoch_history['disent_after'][-1], prog_bar=True)
+        self.log('val_reg_mean', self.epoch_history['reg_mean'][-1], prog_bar=True)
         # self.log('val_reg_var', self.epoch_history['reg_var'][-1], prog_bar=True)
