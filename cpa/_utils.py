@@ -29,6 +29,7 @@ class VanillaEncoder(nn.Module):
             n_output,
             n_hidden,
             n_layers,
+            n_cat_list,
             use_layer_norm=True,
             use_batch_norm=False,
             output_activation: str = 'linear',
@@ -42,6 +43,7 @@ class VanillaEncoder(nn.Module):
         self.network = FCLayers(
             n_in=n_input,
             n_out=n_hidden,
+            n_cat_list=n_cat_list,
             n_layers=n_layers,
             n_hidden=n_hidden,
             use_layer_norm=use_layer_norm,
@@ -51,8 +53,8 @@ class VanillaEncoder(nn.Module):
         )
         self.z = nn.Linear(n_hidden, n_output)
 
-    def forward(self, inputs):
-        z = self.z(self.network(inputs))
+    def forward(self, inputs, *cat_list):
+        z = self.z(self.network(inputs, *cat_list))
         return z
 
 
@@ -63,6 +65,7 @@ class DecoderNormal(nn.Module):
             n_output,
             n_hidden,
             n_layers,
+            n_cat_list,
             use_layer_norm=True,
             use_batch_norm=False,
             output_activation: str = 'linear',
@@ -75,6 +78,7 @@ class DecoderNormal(nn.Module):
         self.network = FCLayers(
             n_in=n_input,
             n_out=n_hidden,
+            n_cat_list=n_cat_list,
             n_layers=n_layers,
             n_hidden=n_hidden,
             use_layer_norm=use_layer_norm,
@@ -85,8 +89,8 @@ class DecoderNormal(nn.Module):
         self.mean = nn.Linear(n_hidden, n_output, bias=False)
         self.var = nn.Linear(n_hidden, n_output, bias=False)
 
-    def forward(self, inputs):
-        x = self.network(inputs)
+    def forward(self, inputs, *cat_list):
+        x = self.network(inputs, *cat_list)
         locs = self.mean(x)
         var_ = self.var(x)
         if self.output_activation == 'relu':
