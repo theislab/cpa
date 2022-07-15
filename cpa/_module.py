@@ -11,9 +11,10 @@ from scvi.module import Classifier
 from scvi import settings
 
 from ._metrics import entropy_batch_mixing, knn_purity
-from ._utils import DecoderNormal, DrugNetwork, VanillaEncoder, REGISTRY_KEYS
+from ._utils import DecoderNormal, DrugNetwork, VanillaEncoder, CPA_REGISTRY_KEYS, DecoderNB
 
 import numpy as np
+from copy import deepcopy
 
 
 class CPAModule(BaseModuleClass):
@@ -24,13 +25,13 @@ class CPAModule(BaseModuleClass):
     ----------
         n_genes: int
         n_treatments: int
-        covars_encoder: dict
+        cat_covars_encoder: dict
             Dictionary of covariates with keys as each covariate name and values as
                 number of unique values of the corresponding covariate
         n_latent: int
             Latent Dimension
         loss_ae: str
-            Autoencoder loss (either "gauss" or "mse")
+            Autoencoder loss (either "gauss", "mse" or "nb")
         doser: str
             # TODO: What is this
         autoencoder_width: int
@@ -43,7 +44,8 @@ class CPAModule(BaseModuleClass):
     def __init__(self,
                  n_genes: int,
                  n_drugs: int,
-                 covars_encoder: dict,
+                 cat_covars_encoder: dict,
+                 cont_covars: list = [],
                  n_latent: int = 128,
                  loss_ae="gauss",
                  doser_type="logsigm",
@@ -62,7 +64,8 @@ class CPAModule(BaseModuleClass):
                  ):
         super().__init__()
 
-        assert loss_ae in ['mse', 'gauss']
+        loss_ae = loss_ae.lower()
+        assert loss_ae in ['mse', 'gauss', 'nb']
 
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -83,7 +86,10 @@ class CPAModule(BaseModuleClass):
         self.use_layer_norm = use_layer_norm
         self.variational = variational
 
-        self.covars_encoder = covars_encoder
+        self.cat_covars_encoder = cat_covars_encoder
+        self.cont_covars = cont_covars
+
+        self.control_treatment_idx = None
 
         self.variational = variational
         if variational:
@@ -102,6 +108,7 @@ class CPAModule(BaseModuleClass):
             self.encoder = VanillaEncoder(
                 n_input=n_genes,
                 n_output=n_latent,
+                n_cat_list=[],
                 n_hidden=autoencoder_width,
                 n_layers=autoencoder_depth,
                 use_batch_norm=use_batch_norm,
@@ -110,9 +117,37 @@ class CPAModule(BaseModuleClass):
                 activation_fn=nn.ReLU,
             )
 
+        if self.loss_ae == 'nb':
+            self.l_encoder = FCLayers(
+                n_in=n_genes,
+                n_out=1,
+                n_hidden=autoencoder_width,
+                n_layers=autoencoder_depth,
+                use_batch_norm=use_batch_norm,
+                use_layer_norm=use_layer_norm,
+                dropout_rate=dropout_rate,
+                activation_fn=nn.ReLU,
+            )
+
+            # Decoder components
+            self.px_r = torch.nn.Parameter(torch.randn(n_genes))
+
         # Decoder components
         if loss_ae in ["gauss", 'mse']:
             self.decoder = DecoderNormal(
+                n_input=n_latent,
+                n_output=n_genes,
+                n_cat_list=[],
+                n_hidden=autoencoder_width,
+                n_layers=autoencoder_depth,
+                use_batch_norm=use_batch_norm,
+                use_layer_norm=use_layer_norm,
+                output_activation=output_activation,
+                dropout_rate=dropout_rate,
+            )
+
+        elif loss_ae == 'nb':
+            self.decoder = DecoderNB(
                 n_input=n_latent,
                 n_output=n_genes,
                 n_hidden=autoencoder_width,
@@ -149,14 +184,14 @@ class CPAModule(BaseModuleClass):
         )
 
         # 2. Covariates Embedding
-        self.covars_embedding = nn.ModuleDict(
+        self.cat_covars_embeddings = nn.ModuleDict(
             {
                 key: torch.nn.Embedding(len(unique_covars), n_latent)
-                for key, unique_covars in self.covars_encoder.items()
+                for key, unique_covars in self.cat_covars_encoder.items()
             }
         )
 
-        self.covars_classifiers = nn.ModuleDict(
+        self.cat_covars_classifiers = nn.ModuleDict(
             {
                 key: Classifier(n_input=n_latent,
                                 n_labels=len(unique_covars),
@@ -168,29 +203,57 @@ class CPAModule(BaseModuleClass):
                                 logits=True)
                 if len(unique_covars) > 1 else None
 
-                for key, unique_covars in self.covars_encoder.items()
+                for key, unique_covars in self.cat_covars_encoder.items()
+            }
+        )
+
+        self.cont_covars_embeddings = nn.ModuleDict(
+            {
+                key: torch.nn.Linear(1, n_latent, bias=False) for key in self.cont_covars
+            }
+        )
+
+        self.cont_covars_regressors = nn.ModuleDict(
+            {
+                key: FCLayers(n_in=n_latent,
+                              n_out=1,
+                              n_hidden=self.adversary_width,
+                              n_layers=self.adversary_depth,
+                              use_batch_norm=use_batch_norm,
+                              use_layer_norm=use_layer_norm,
+                              dropout_rate=dropout_rate,
+                              activation_fn=nn.ReLU,
+                              )
+                for key in self.cont_covars
             }
         )
 
         self.ae_loss_fn = nn.GaussianNLLLoss()
-        self.adv_loss_covariates = nn.CrossEntropyLoss()
+        self.adv_loss_cat_covariates = nn.CrossEntropyLoss()
+        self.adv_loss_cont_covariates = nn.MSELoss()
 
         self.adv_loss_drugs = nn.BCEWithLogitsLoss()
 
     def _get_inference_input(self, tensors):
-        x = tensors[REGISTRY_KEYS.X_KEY]  # batch_size, n_genes
+        x = tensors[CPA_REGISTRY_KEYS.X_KEY]  # batch_size, n_genes
         drugs_doses = tensors['drugs_doses']
 
-        covars_dict = dict()
-        for covar, unique_covars in self.covars_encoder.items():
+        cat_covars_dict = dict()
+        for covar, unique_covars in self.cat_covars_encoder.items():
             encoded_covars = tensors[covar].view(-1, )  # (batch_size,)
-            covars_dict[covar] = encoded_covars
+            cat_covars_dict[covar] = encoded_covars
+
+        cont_covars_dict = dict()
+        for covar in self.cont_covars:
+            encoded_covars = tensors[covar].view(-1, )  # (batch_size,)
+            cont_covars_dict[covar] = encoded_covars
 
         input_dict = dict(
             genes=x,
             drugs=drugs_doses,
             doses=None,
-            covars_dict=covars_dict,
+            cat_covars_dict=cat_covars_dict,
+            cont_covars_dict=cont_covars_dict,
         )
         return input_dict
 
@@ -200,11 +263,15 @@ class CPAModule(BaseModuleClass):
             genes,
             drugs,
             doses,
-            covars_dict,
+            cat_covars_dict,
+            cont_covars_dict,
     ):
         # x_ = torch.log1p(x)
         batch_size = genes.shape[0]
         x_ = genes
+        if self.loss_ae == 'nb':
+            x_ = torch.log1p(x_)
+
         if self.variational:
             z_means, z_vars, latent_basal = self.encoder(x_)
             basal_distribution = db.Normal(z_means, z_vars.sqrt())
@@ -212,23 +279,48 @@ class CPAModule(BaseModuleClass):
             basal_distribution = None
             latent_basal = self.encoder(x_)
 
+        if self.loss_ae == 'nb':
+            library = self.l_encoder(x_)
+        else:
+            library = None
+
         latent_treatment = self.drug_network(drugs, doses)
 
-        latent_covariates = []
-        for covar, _ in self.covars_encoder.items():
-            latent_covar_i = self.covars_embedding[covar](covars_dict[covar].long())
+        latent_cat_covariates = []
+        for covar, _ in self.cat_covars_encoder.items():
+            latent_covar_i = self.cat_covars_embeddings[covar](cat_covars_dict[covar].long())
             latent_covar_i = latent_covar_i.view(batch_size, self.n_latent).unsqueeze(0)  # 1, batch_size, n_latent
-            latent_covariates.append(latent_covar_i)
+            latent_cat_covariates.append(latent_covar_i)
 
-        if len(latent_covariates) > 0:
-            latent_covariates = torch.cat(latent_covariates, 0).sum(0)  # Summing all covariates representations
-            latent = latent_basal + latent_treatment + latent_covariates
+        latent_cont_covariates = []
+        for covar, _ in self.cont_covars:
+            latent_covar_i = self.cont_covars_embeddings[covar](cont_covars_dict[covar])
+            latent_covar_i = latent_covar_i.view(batch_size, self.n_latent).unsqueeze(0)  # 1, batch_size, n_latent
+            latent_cont_covariates.append(latent_covar_i)
+
+        latent = latent_basal + latent_treatment
+
+        if len(latent_cat_covariates) > 0:
+            latent_cat_covariates = torch.cat(latent_cat_covariates, 0).sum(
+                0)  # Summing all categorical covariates representations
+            latent += latent_cat_covariates
         else:
-            latent = latent_basal + latent_treatment
+            latent_cat_covariates = None
+
+        if len(latent_cont_covariates) > 0:
+            latent_cont_covariates = torch.cat(latent_cont_covariates, 0).sum(
+                0)  # Summing all continuous covariates representations
+            latent += latent_cont_covariates
+        else:
+            latent_cont_covariates = None
 
         return dict(
             latent=latent,
             latent_basal=latent_basal,
+            latent_treatment=latent_treatment,
+            latent_cont_covariates=latent_cont_covariates,
+            latent_cat_covariates=latent_cat_covariates,
+            library=library,
             basal_distribution=basal_distribution,
         )
 
@@ -239,12 +331,13 @@ class CPAModule(BaseModuleClass):
         latent_basal = inference_outputs['latent_basal']
 
         covars_dict = dict()
-        for covar, _ in self.covars_encoder.items():
+        for covar, _ in self.cat_covars_encoder.items():
             val = tensors[covar].view(-1, )
             covars_dict[covar] = val
 
         input_dict['latent'] = latent
         input_dict['latent_basal'] = latent_basal
+        input_dict['library'] = inference_outputs['library']
         return input_dict
 
     @auto_move_data
@@ -252,22 +345,36 @@ class CPAModule(BaseModuleClass):
             self,
             latent,
             latent_basal,
+            library=None,
     ):
-        outputs = self.decoder(inputs=latent)
-        return dict(
-            means=outputs.loc,
-            variances=outputs.variance,
-        )
+        if self.loss_ae in ['mse', 'gauss']:
+            outputs = self.decoder(inputs=latent)
+            return dict(
+                means=outputs.loc,
+                variances=outputs.variance,
+                distribution=outputs,
+                samples=outputs.sample_n(n=1).squeeze(0),
+            )
+        elif self.loss_ae == 'nb':
+            outputs = self.decoder(inputs=latent, library=library, px_r=self.px_r)
+            return dict(
+                distribution=outputs,
+                samples=outputs.sample().squeeze(0),
+            )
 
     def loss(self, tensors, inference_outputs, generative_outputs):
         """Computes the reconstruction loss (AE) or the ELBO (VAE)"""
-        x = tensors[REGISTRY_KEYS.X_KEY]
-
-        means = generative_outputs["means"]
-        variances = generative_outputs["variances"]
+        x = tensors[CPA_REGISTRY_KEYS.X_KEY]
 
         if self.loss_ae in ["gauss", "mse"]:
+            means = generative_outputs["means"]
+            variances = generative_outputs["variances"]
             reconstruction_loss = self.ae_loss_fn(x, means, variances)
+        elif self.loss_ae == 'nb':
+            dist_px = generative_outputs['distribution']
+            log_px = dist_px.log_prob(x).mean(-1)
+            reconstruction_loss = -log_px
+            reconstruction_loss = reconstruction_loss.mean()
         else:
             raise Exception('Invalid Loss function for CPA')
 
@@ -282,51 +389,122 @@ class CPAModule(BaseModuleClass):
 
         return reconstruction_loss, kl_loss
 
+    def cycle_regularization(self, tensors, inference_outputs, generative_outputs):
+        x = tensors[CPA_REGISTRY_KEYS.X_KEY]
+
+        batch_size = x.shape[0]
+
+        if self.control_treatment_idx is None:
+            control_mask = tensors['control'].bool().view(-1, )
+            self.control_treatment_idx = tensors['drugs_doses'][control_mask][0, :].view(1, -1)
+
+        control_latent = self.drug_network(self.control_treatment_idx.repeat(batch_size, 1))
+        latent_control_basal = inference_outputs['latent_basal'] + control_latent
+
+        if inference_outputs['latent_cat_covariates'] is not None:
+            latent_control_basal += inference_outputs['latent_cat_covariates']
+
+        if inference_outputs['latent_cont_covariates'] is not None:
+            latent_control_basal += inference_outputs['latent_cont_covariates']
+
+        control_outputs = self.generative(latent_control_basal, None, library=inference_outputs['library'])
+
+        pred_control_x = torch.nan_to_num(control_outputs['samples'], neginf=0, nan=0, posinf=100)
+
+        new_tensors = deepcopy(tensors)
+        new_tensors[CPA_REGISTRY_KEYS.X_KEY] = pred_control_x
+
+        pred_x = self.generative(
+            **self._get_generative_input(new_tensors, self.inference(**self._get_inference_input(new_tensors))))
+
+        if 'deg_mask' in tensors:
+            deg_mask = tensors['deg_mask']
+
+            x = x * deg_mask
+            if self.loss_ae in ['gauss', 'mse']:
+                pred_x['means'] *= deg_mask
+                pred_x['variances'] *= deg_mask
+
+        if self.loss_ae in ['gauss', 'mse']:
+            reconstruction_loss = self.ae_loss_fn(x, pred_x['means'], pred_x['variances'])
+
+        elif self.loss_ae == 'nb':
+            dist_px = generative_outputs['distribution']
+            log_px = dist_px.log_prob(x).mean(-1)
+            reconstruction_loss = -log_px
+            reconstruction_loss = reconstruction_loss.mean()
+        else:
+            raise ValueError('Incorrect loss_ae has been passed! Must be either `gauss`, `mse`, or `nb`')
+
+        return reconstruction_loss
+
     def adversarial_loss(self, tensors, latent_basal):
         """Computes adversarial classification losses and regularizations"""
         drugs_doses = tensors['drugs_doses']
         batch_size = drugs_doses.shape[0]
 
-        covars_dict = dict()
-        for covar, unique_covars in self.covars_encoder.items():
-            encoded_covars = tensors[covar].view(-1, )  # (batch_size,)
-            covars_dict[covar] = encoded_covars
-
         drugs_pred = self.drugs_classifier(latent_basal)
-        covars_pred = {}
-        for covar in self.covars_encoder.keys():
-            if self.covars_classifiers[covar] is not None:
-                covar_pred = self.covars_classifiers[covar](latent_basal)
-                covars_pred[covar] = covar_pred
+        cat_covars_pred = {}
+        for covar in self.cat_covars_encoder.keys():
+            if self.cat_covars_classifiers[covar] is not None:
+                covar_pred = self.cat_covars_classifiers[covar](latent_basal)
+                cat_covars_pred[covar] = covar_pred
             else:
-                covars_pred[covar] = None
+                cat_covars_pred[covar] = None
+
+        cont_covars_pred = {}
+        for covar in self.cont_covars:
+            if self.cont_covars_regressors[covar] is not None:
+                covar_pred = self.cont_covars_regressors[covar](latent_basal)
+                cont_covars_pred[covar] = covar_pred
+            else:
+                cont_covars_pred[covar] = None
 
         adv_results = {}
-        # Classification losses for different covariates
-        for covar in self.covars_encoder.keys():
-            adv_results[f'adv_{covar}'] = self.adv_loss_covariates(
-                covars_pred[covar],
-                covars_dict[covar].long(),
-            ) if covars_pred[covar] is not None else torch.as_tensor(0.0).to(self.device)
+
+        # Classification losses for different categorical covariates
+        for covar in self.cat_covars_encoder.keys():
+            adv_results[f'adv_{covar}'] = self.adv_loss_cat_covariates(
+                cat_covars_pred[covar],
+                tensors[covar].view(-1, ).long(),
+            ) if cat_covars_pred[covar] is not None else torch.as_tensor(0.0).to(self.device)
             adv_results[f'acc_{covar}'] = torch.sum(
-                covars_pred[covar].argmax(1) == covars_dict[covar].long().squeeze(-1)) / batch_size \
-                if covars_pred[covar] is not None else torch.as_tensor(0.0).to(self.device)
+                cat_covars_pred[covar].argmax(1) == tensors[covar].long().view(-1, )) / batch_size \
+                if cat_covars_pred[covar] is not None else torch.as_tensor(0.0).to(self.device)
+
+        # Regression losses for different continuous covariates
+        for covar in self.cont_covars:
+            adv_results[f'adv_{covar}'] = self.adv_loss_cont_covariates(
+                cont_covars_pred[covar],
+                tensors[covar].view(-1, ),
+            ) if cont_covars_pred[covar] is not None else torch.as_tensor(0.0).to(self.device)
 
         # Classification loss for different drug combinations
         adv_results['adv_drugs'] = self.adv_loss_drugs(drugs_pred, drugs_doses.gt(
             0).float())
-        adv_results['adv_loss'] = adv_results['adv_drugs'] + sum(
-            [adv_results[f'adv_{key}'] for key in self.covars_encoder.keys()])
+        adv_results['adv_loss'] = \
+            adv_results['adv_drugs'] + \
+            sum([adv_results[f'adv_{key}'] for key in self.cat_covars_encoder.keys()]) + \
+            sum([adv_results[f'adv_{key}'] for key in self.cont_covars])
 
         # Penalty losses
-        for covar in self.covars_encoder.keys():
+        for covar in self.cat_covars_encoder.keys():
             adv_results[f'penalty_{covar}'] = (
                 torch.autograd.grad(
-                    covars_pred[covar].sum(),
+                    cat_covars_pred[covar].sum(),
                     latent_basal,
                     create_graph=True
                 )[0].pow(2).mean()
-            ) if covars_pred[covar] is not None else torch.as_tensor(0.0).to(self.device)
+            ) if cat_covars_pred[covar] is not None else torch.as_tensor(0.0).to(self.device)
+
+        for covar in self.cont_covars:
+            adv_results[f'penalty_{covar}'] = (
+                torch.autograd.grad(
+                    cont_covars_pred[covar].sum(),
+                    latent_basal,
+                    create_graph=True
+                )[0].pow(2).mean()
+            ) if cont_covars_pred[covar] is not None else torch.as_tensor(0.0).to(self.device)
 
         adv_results['penalty_drugs'] = (
             torch.autograd.grad(
@@ -335,26 +513,44 @@ class CPAModule(BaseModuleClass):
                 create_graph=True,
             )[0].pow(2).mean()
         )
-        adv_results['penalty_adv'] = adv_results['penalty_drugs'] + sum(
-            [adv_results[f'penalty_{covar}'] for covar in self.covars_encoder.keys()])
+
+        adv_results['penalty_adv'] = \
+            adv_results['penalty_drugs'] + \
+            sum([adv_results[f'penalty_{covar}'] for covar in self.cat_covars_encoder.keys()]) + \
+            sum([adv_results[f'penalty_{covar}'] for covar in self.cont_covars])
 
         return adv_results
 
-    def r2_metric(self, tensors, inference_outputs, generative_outputs):
-        pred_mean = torch.nan_to_num(generative_outputs['means'], nan=1e2, neginf=-1e3,
-                                     posinf=1e3).detach().cpu().numpy()  # batch_size, n_genes
-        pred_var = torch.nan_to_num(generative_outputs['variances'], nan=1e2, neginf=-1e3,
-                                    posinf=1e3).detach().cpu().numpy()  # batch_size, n_genes
+    def r2_metric(self, tensors, inference_outputs, generative_outputs, method: str = 'lfc'):
+        method = method.lower()
+        assert method.lower() in ['lfc', 'cycle', 'abs']
 
-        x = tensors[REGISTRY_KEYS.X_KEY].detach().cpu().numpy()  # batch_size, n_genes
+        x = tensors[CPA_REGISTRY_KEYS.X_KEY].detach().cpu().numpy()  # batch_size, n_genes
 
         batch_size = x.shape[0]
 
+        if self.control_treatment_idx is None:
+            control_mask = tensors['control'].bool().view(-1, )
+            self.control_treatment_idx = tensors['drugs_doses'][control_mask][0, :].view(1, -1)
+
+        control_latent = self.drug_network(self.control_treatment_idx.repeat(batch_size, 1))
+
+        latent_control_basal = inference_outputs['latent_basal'] + control_latent
+
+        if inference_outputs['latent_cat_covariates'] is not None:
+            latent_control_basal += inference_outputs['latent_cat_covariates']
+
+        if inference_outputs['latent_cont_covariates'] is not None:
+            latent_control_basal += inference_outputs['latent_cont_covariates']
+
+        control_outputs = self.generative(latent_control_basal, inference_outputs['latent_basal'],
+                                          library=inference_outputs['library'])
+
         drugs_doses = tensors['drugs_doses']  # (batch_size, n_drugs)
-        indices = (drugs_doses * torch.arange(drugs_doses.shape[1]).exp().view(1, -1).repeat(batch_size, 1).to(
+        indices = (drugs_doses * torch.arange(drugs_doses.shape[1]).view(1, -1).repeat(batch_size, 1).to(
             drugs_doses.device)).sum(dim=1)
 
-        for i, covar in enumerate(self.covars_encoder.keys()):
+        for i, covar in enumerate(self.cat_covars_encoder.keys()):
             indices += tensors[covar].view(-1, )  # (batch_size,)
 
         r2_mean = 0.0
@@ -363,20 +559,219 @@ class CPAModule(BaseModuleClass):
         unique_indices = indices.unique()
         n_unique_indices = len(unique_indices)
 
-        for index in unique_indices:
-            index_mask = (indices == index).detach().cpu().numpy()
-            x_index = x[index_mask]
-            means_index = pred_mean[index_mask]
-            variances_index = pred_var[index_mask]
+        if method == 'lfc':
+            if self.loss_ae in ['gauss', 'mse']:
+                pred_control_mean = torch.nan_to_num(control_outputs['means'], neginf=0, nan=0,
+                                                     posinf=100).detach().cpu().numpy()
+                pred_control_var = torch.nan_to_num(control_outputs['variances'], neginf=0, nan=0,
+                                                    posinf=100).detach().cpu().numpy()
 
-            true_mean_index = x_index.mean(0)
-            pred_mean_index = means_index.mean(0)
+                pred_x_mean = torch.nan_to_num(generative_outputs['means'], neginf=0, nan=0,
+                                               posinf=100).detach().cpu().numpy()
+                pred_x_var = torch.nan_to_num(generative_outputs['variances'], neginf=0, nan=0,
+                                              posinf=100).detach().cpu().numpy()
 
-            true_var_index = x_index.var(0)
-            pred_var_index = variances_index.mean(0)
+                if 'deg_mask' in tensors:
+                    deg_mask = tensors['deg_mask'].detach().cpu().numpy()
 
-            r2_mean += r2_score(true_mean_index, pred_mean_index) / n_unique_indices
-            r2_var += r2_score(true_var_index, pred_var_index) / n_unique_indices
+                    x *= deg_mask
+                    pred_x_mean *= deg_mask
+                    pred_x_var *= deg_mask
+                    pred_control_mean *= deg_mask
+                    pred_control_var *= deg_mask
+
+                for index in unique_indices:
+                    index_mask = (indices == index).detach().cpu().numpy()
+
+                    x_index = x[index_mask]
+                    pred_x_mean_index = pred_x_mean[index_mask]
+                    pred_x_var_index = pred_x_var[index_mask]
+
+                    pred_control_mean_index = pred_control_mean[index_mask]
+                    pred_control_var_index = pred_control_var[index_mask]
+
+                    true_mean_index = x_index.mean(0) - np.nan_to_num(pred_control_mean_index.mean(0), neginf=0.,
+                                                                      posinf=100., nan=0.0)
+                    true_var_index = x_index.var(0) - np.nan_to_num(pred_control_var_index.mean(0), neginf=0.,
+                                                                    posinf=100., nan=0.0)
+
+                    pred_mean_index = np.nan_to_num(pred_x_mean_index.mean(0) - pred_control_mean_index.mean(0),
+                                                    neginf=0., posinf=100., nan=0.0)
+                    pred_var_index = np.nan_to_num(pred_x_var_index.mean(0) - pred_control_var_index.mean(0), neginf=0.,
+                                                   posinf=100., nan=0.0)
+
+                    r2_mean += r2_score(true_mean_index, pred_mean_index) / n_unique_indices
+                    r2_var += r2_score(true_var_index, pred_var_index) / n_unique_indices
+
+            elif self.loss_ae == 'nb':
+                pred_control = torch.nan_to_num(control_outputs['samples'], neginf=0, nan=0,
+                                                posinf=100).detach().cpu().numpy()
+
+                pred_x = torch.nan_to_num(generative_outputs['samples'], neginf=0, nan=0,
+                                          posinf=100).detach().cpu().numpy()
+
+                if 'deg_mask' in tensors:
+                    deg_mask = tensors['deg_mask'].detach().cpu().numpy()
+
+                    x *= deg_mask
+                    pred_x *= deg_mask
+                    pred_control *= deg_mask
+
+                for index in unique_indices:
+                    index_mask = (indices == index).detach().cpu().numpy()
+
+                    x_index = x[index_mask]
+                    pred_x_index = pred_x[index_mask]
+
+                    pred_x_mean_index = np.nan_to_num(pred_x_index.mean(0), neginf=0., posinf=100., nan=0.0)
+                    pred_x_var_index = np.nan_to_num(pred_x_index.var(0), neginf=0., posinf=100., nan=0.0)
+
+                    pred_control_mean_index = np.nan_to_num(pred_control[index_mask].mean(0),
+                                                            neginf=0., posinf=100.,
+                                                            nan=0.0)
+                    pred_control_var_index = np.nan_to_num(pred_control[index_mask].var(0),
+                                                           neginf=0., posinf=100.,
+                                                           nan=0.0)
+
+                    true_mean_index = np.nan_to_num(np.log1p(x_index), neginf=0.) - np.nan_to_num(
+                        np.log1p(pred_control_mean_index), neginf=0.)
+                    true_var_index = np.nan_to_num(np.log1p(x_index), neginf=0.) - np.nan_to_num(
+                        np.log1p(pred_control_var_index), neginf=0.)
+
+                    pred_mean_index = np.nan_to_num(np.log1p(pred_x_mean_index), neginf=0.) - np.nan_to_num(
+                        np.log1p(pred_control_mean_index), neginf=0.)
+                    pred_var_index = np.nan_to_num(np.log1p(pred_x_var_index), neginf=0.) - np.nan_to_num(
+                        np.log1p(pred_control_var_index), neginf=0.)
+
+                    r2_mean += r2_score(true_mean_index, pred_mean_index) / n_unique_indices
+                    r2_var += r2_score(true_var_index, pred_var_index) / n_unique_indices
+
+        elif method == 'cycle':
+            pred_control_x = torch.nan_to_num(control_outputs['samples'], neginf=0, nan=0, posinf=100)
+
+            new_tensors = deepcopy(tensors)
+            new_tensors[CPA_REGISTRY_KEYS.X_KEY] = pred_control_x
+
+            pred_x = self.generative(
+                **self._get_generative_input(new_tensors, self.inference(**self._get_inference_input(new_tensors))))
+
+            if self.loss_ae in ['gauss', 'mse']:
+                pred_x_mean = torch.nan_to_num(pred_x['means'], neginf=0., posinf=100., nan=0.0).detach().cpu().numpy()
+                pred_x_var = torch.nan_to_num(pred_x['variances'], neginf=0., posinf=100.,
+                                              nan=0.0).detach().cpu().numpy()
+
+                if 'deg_mask' in tensors:
+                    deg_mask = tensors['deg_mask'].detach().cpu().numpy()
+
+                    x *= deg_mask
+                    pred_x_mean *= deg_mask
+                    pred_x_var *= deg_mask
+
+                for index in unique_indices:
+                    index_mask = (indices == index).detach().cpu().numpy()
+
+                    x_index = x[index_mask]
+                    pred_x_mean_index = pred_x_mean[index_mask]
+                    pred_x_var_index = pred_x_var[index_mask]
+
+                    true_mean_index = x_index.mean(0)
+                    true_var_index = x_index.var(0)
+
+                    pred_mean_index = np.nan_to_num(pred_x_mean_index.mean(0), neginf=0.0, posinf=100, nan=0.0)
+                    pred_var_index = np.nan_to_num(pred_x_var_index.mean(0), neginf=0.0, posinf=100, nan=0.0)
+
+                    r2_mean += r2_score(true_mean_index, pred_mean_index) / n_unique_indices
+                    r2_var += r2_score(true_var_index, pred_var_index) / n_unique_indices
+            elif self.loss_ae == 'nb':
+                x = np.log1p(x)
+                pred_control_x = torch.nan_to_num(control_outputs['samples'], neginf=0, nan=0, posinf=100)
+
+                new_tensors = deepcopy(tensors)
+                new_tensors[CPA_REGISTRY_KEYS.X_KEY] = pred_control_x
+
+                pred_x = self.generative(
+                    **self._get_generative_input(new_tensors, self.inference(**self._get_inference_input(new_tensors))))
+
+                pred_x = np.log1p(
+                    torch.nan_to_num(pred_x['samples'], neginf=0, posinf=100, nan=0).detach().cpu().numpy())
+
+                if 'deg_mask' in tensors:
+                    deg_mask = tensors['deg_mask'].detach().cpu().numpy()
+
+                    x *= deg_mask
+                    pred_x *= deg_mask
+
+                for index in unique_indices:
+                    index_mask = (indices == index).detach().cpu().numpy()
+
+                    x_index = x[index_mask]
+                    pred_x_index = pred_x[index_mask]
+
+                    pred_x_mean_index = np.nan_to_num(pred_x_index.mean(0), neginf=0., posinf=100., nan=0.0)
+                    pred_x_var_index = np.nan_to_num(pred_x_index.var(0), neginf=0., posinf=100., nan=0.0)
+
+                    true_mean_index = x_index.mean(0)
+                    true_var_index = x_index.var(0)
+
+                    r2_mean += r2_score(true_mean_index, pred_x_mean_index) / n_unique_indices
+                    r2_var += r2_score(true_var_index, pred_x_var_index) / n_unique_indices
+
+        elif method == 'abs':
+            if self.loss_ae in ['gauss', 'mse']:
+                pred_x_mean = torch.nan_to_num(generative_outputs['means'], neginf=0, nan=0,
+                                               posinf=100).detach().cpu().numpy()
+                pred_x_var = torch.nan_to_num(generative_outputs['variances'], neginf=0, nan=0,
+                                              posinf=100).detach().cpu().numpy()
+
+                if 'deg_mask' in tensors:
+                    deg_mask = tensors['deg_mask'].detach().cpu().numpy()
+
+                    x *= deg_mask
+                    pred_x_mean *= deg_mask
+                    pred_x_var *= deg_mask
+
+                for index in unique_indices:
+                    index_mask = (indices == index).detach().cpu().numpy()
+
+                    x_index = x[index_mask]
+                    pred_x_mean_index = pred_x_mean[index_mask]
+                    pred_x_var_index = pred_x_var[index_mask]
+
+                    true_mean_index = x_index.mean(0)
+                    true_var_index = x_index.var(0)
+
+                    pred_mean_index = pred_x_mean_index.mean(0)
+                    pred_var_index = pred_x_var_index.mean(0)
+
+                    r2_mean += r2_score(true_mean_index, pred_mean_index) / n_unique_indices
+                    r2_var += r2_score(true_var_index, pred_var_index) / n_unique_indices
+            elif self.loss_ae == 'nb':
+                x = np.log1p(x)
+                pred_x = torch.nan_to_num(generative_outputs['samples'], neginf=0, nan=0,
+                                          posinf=100).detach().cpu().numpy()
+
+                pred_x = np.log1p(pred_x)
+
+                if 'deg_mask' in tensors:
+                    deg_mask = tensors['deg_mask'].detach().cpu().numpy()
+
+                    x *= deg_mask
+                    pred_x *= deg_mask
+
+                for index in unique_indices:
+                    index_mask = (indices == index).detach().cpu().numpy()
+
+                    x_index = x[index_mask]
+                    pred_x_index = pred_x[index_mask]
+
+                    pred_x_mean_index = pred_x_index.mean(0)
+                    pred_x_var_index = pred_x_index.var(0)
+
+                    true_mean_index = x_index.mean(0)
+                    true_var_index = x_index.var(0)
+
+                    r2_mean += r2_score(true_mean_index, pred_x_mean_index) / n_unique_indices
+                    r2_var += r2_score(true_var_index, pred_x_var_index) / n_unique_indices
 
         return r2_mean, r2_var
 
@@ -388,7 +783,7 @@ class CPAModule(BaseModuleClass):
 
         knn_basal = knn_purity(latent_basal, drug_names.ravel(), n_neighbors=min(drug_names.shape[0] - 1, 30))
 
-        for covar, unique_covars in self.covars_encoder.items():
+        for covar, unique_covars in self.cat_covars_encoder.items():
             if len(unique_covars) > 1:
                 target_covars = tensors[f'{covar}'].detach().cpu().numpy()
                 knn_basal += knn_purity(latent_basal, target_covars.ravel(),
@@ -396,7 +791,7 @@ class CPAModule(BaseModuleClass):
 
         knn_after = knn_purity(latent, drug_names.ravel(), n_neighbors=min(drug_names.shape[0] - 1, 30))
 
-        for covar, unique_covars in self.covars_encoder.items():
+        for covar, unique_covars in self.cat_covars_encoder.items():
             if len(unique_covars) > 1:
                 target_covars = tensors[f'{covar}'].detach().cpu().numpy()
                 knn_after += knn_purity(latent, target_covars.ravel(), n_neighbors=min(target_covars.shape[0] - 1, 30))
@@ -420,11 +815,15 @@ class CPAModule(BaseModuleClass):
             inference_kwargs=inference_kwargs,
         )
         if self.loss_ae in ["gauss", 'mse']:
-            mus = torch.nan_to_num(generative_outputs['means'], nan=1e2, neginf=-1e3,
-                                   posinf=1e3)  # batch_size, n_genes
-            stds = torch.nan_to_num(generative_outputs['variances'], nan=1e2, neginf=-1e3,
-                                    posinf=1e3)  # batch_size, n_genes
+            mus = torch.nan_to_num(generative_outputs['means'], nan=0, neginf=0,
+                                   posinf=100)  # batch_size, n_genes
+            stds = torch.nan_to_num(generative_outputs['variances'], nan=0, neginf=0,
+                                    posinf=100)  # batch_size, n_genes
             return mus, stds
+        elif self.loss_ae == 'nb':
+            pred_x = torch.nan_to_num(generative_outputs['samples'], neginf=0, nan=0,
+                                      posinf=100).detach().cpu().numpy()
+            return pred_x
         else:
             raise ValueError
 
