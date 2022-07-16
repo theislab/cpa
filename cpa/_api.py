@@ -12,7 +12,7 @@ from sklearn.metrics import r2_score
 from sklearn.metrics.pairwise import cosine_distances, euclidean_distances
 
 from ._model import CPA
-from ._utils import REGISTRY_KEYS
+from ._utils import CPA_REGISTRY_KEYS
 
 
 class ComPertAPI:
@@ -22,7 +22,8 @@ class ComPertAPI:
 
     def __init__(self, adata: AnnData, model: CPA,
                  de_genes_uns_key: str = 'rank_genes_groups_cov',
-                 pert_category_key: str = 'cov_drug_dose_name'):
+                 pert_category_key: str = 'cov_drug_dose_name',
+                 control_key: str = 'control'):
         """
         Parameters
         ----------
@@ -31,13 +32,10 @@ class ComPertAPI:
         model : ComPertModel
             Pre-trained ComPert model.
         """
-        self.perturbation_key = REGISTRY_KEYS.DRUG_KEY
-        self.dose_key = REGISTRY_KEYS.DOSE_KEY
-        self.covars_key = REGISTRY_KEYS.COVARS_KEYS
-        self.control_key = REGISTRY_KEYS.CONTROL_KEY
-
-        # self.min_dose = adata.obs[_CE_CONSTANTS.DOSE_KEY].min()
-        # self.max_dose = adata.obs[_CE_CONSTANTS.DOSE_KEY].max()
+        self.perturbation_key = CPA_REGISTRY_KEYS.PERTURBATION_KEYS['perturbation']
+        self.dose_key = CPA_REGISTRY_KEYS.PERTURBATION_KEYS['dosage']
+        self.covars_key = CPA_REGISTRY_KEYS.CAT_COV_KEYS
+        self.control_key = control_key
 
         self.model = model
         self.adata = adata
@@ -53,13 +51,13 @@ class ComPertAPI:
 
         self.unique_perts = list(model.drug_encoder.keys())
         self.unique_covars = {}
-        for covar in model.covars_encoder.keys():
-            self.unique_covars[covar] = list(model.covars_encoder[covar].keys())
+        for covar in model.cat_covars_encoders.keys():
+            self.unique_covars[covar] = list(model.cat_covars_encoders[covar].keys())
 
         self.num_drugs = len(model.drug_encoder)
 
         self.perts_dict = model.drug_encoder.copy()
-        self.covars_dict = model.covars_encoder.copy()
+        self.covars_dict = model.cat_covars_encoders.copy()
 
         self.emb_covars = None
         self.emb_perts = None
