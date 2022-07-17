@@ -1,5 +1,6 @@
 from typing import Union
 
+import pytorch_lightning
 import torch
 from torch.optim.lr_scheduler import StepLR
 
@@ -8,11 +9,13 @@ from scvi.train import TrainingPlan
 
 import numpy as np
 
+from ._module import CPAModule
+
 
 class CPATrainingPlan(TrainingPlan):
     def __init__(
             self,
-            module: BaseModuleClass,
+            module: CPAModule,
             covars_to_ncovars: dict,
             autoencoder_lr=3e-4,
             n_steps_kl_warmup: Union[int, None] = None,
@@ -21,6 +24,7 @@ class CPATrainingPlan(TrainingPlan):
             adversary_steps: int = 3,
             reg_adversary: float = 60,
             penalty_adversary: float = 60,
+            cycle_coeff: float = 0.0,
             dosers_lr=4e-3,
             dosers_wd=1e-7,
             adversary_lr=3e-4,
@@ -29,6 +33,7 @@ class CPATrainingPlan(TrainingPlan):
             step_size_lr: int = 45,
             batch_size: int = 256,
             variational: bool = False,
+            r2_method: str = 'cycle',
     ):
         """Training plan for the CPA model"""
         super().__init__(
@@ -67,6 +72,9 @@ class CPATrainingPlan(TrainingPlan):
 
         self.variational = variational
 
+        self.cycle_coeff = cycle_coeff
+        self.r2_method = r2_method
+
         self.automatic_optimization = False
         self.iter_count = 0
 
@@ -75,6 +83,7 @@ class CPATrainingPlan(TrainingPlan):
             'epoch': [],
             'recon_loss': [],
             'adv_loss': [],
+            'cycle_loss': [],
             'penalty_adv': [],
             'adv_drugs': [],
             'penalty_drugs': [],
@@ -93,23 +102,37 @@ class CPATrainingPlan(TrainingPlan):
             optimizer_autoencoder = torch.optim.Adam(
                 list(filter(lambda p: p.requires_grad, self.module.encoder.parameters())) +
                 list(filter(lambda p: p.requires_grad, self.module.decoder.parameters())) +
+                list(filter(lambda p: p.requires_grad, self.module.cat_covars_embeddings.parameters())) +
+                list(filter(lambda p: p.requires_grad, self.module.cont_covars_embeddings.parameters())) +
                 list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_embedding.parameters())) +
-                list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_encoder.parameters())) +
-                list(filter(lambda p: p.requires_grad, self.module.covars_embedding.parameters())),
+                list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_encoder.parameters())),
                 lr=self.autoencoder_lr,
                 weight_decay=self.autoencoder_wd)
         else:
-            optimizer_autoencoder = torch.optim.Adam(
-                list(filter(lambda p: p.requires_grad, self.module.encoder.parameters())) +
-                list(filter(lambda p: p.requires_grad, self.module.decoder.parameters())) +
-                list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_embedding.parameters())) +
-                list(filter(lambda p: p.requires_grad, self.module.covars_embedding.parameters())),
-                lr=self.autoencoder_lr,
-                weight_decay=self.autoencoder_wd)
+            if self.module.loss_ae in ['gauss', 'mse']:
+                optimizer_autoencoder = torch.optim.Adam(
+                    list(filter(lambda p: p.requires_grad, self.module.encoder.parameters())) +
+                    list(filter(lambda p: p.requires_grad, self.module.decoder.parameters())) +
+                    list(filter(lambda p: p.requires_grad, self.module.cat_covars_embeddings.parameters())) +
+                    list(filter(lambda p: p.requires_grad, self.module.cont_covars_embeddings.parameters())) +
+                    list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_embedding.parameters())),
+                    lr=self.autoencoder_lr,
+                    weight_decay=self.autoencoder_wd)
+            elif self.module.loss_ae == 'nb':
+                optimizer_autoencoder = torch.optim.Adam(
+                    list(filter(lambda p: p.requires_grad, self.module.encoder.parameters())) +
+                    list(filter(lambda p: p.requires_grad, self.module.l_encoder.parameters())) +
+                    list(filter(lambda p: p.requires_grad, self.module.decoder.parameters())) +
+                    list(filter(lambda p: p.requires_grad, self.module.cat_covars_embeddings.parameters())) +
+                    list(filter(lambda p: p.requires_grad, self.module.cont_covars_embeddings.parameters())) +
+                    list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_embedding.parameters())),
+                    lr=self.autoencoder_lr,
+                    weight_decay=self.autoencoder_wd)
 
         optimizer_adversaries = torch.optim.Adam(
             list(filter(lambda p: p.requires_grad, self.module.drugs_classifier.parameters())) +
-            list(filter(lambda p: p.requires_grad, self.module.covars_classifiers.parameters())),
+            list(filter(lambda p: p.requires_grad, self.module.cat_covars_classifiers.parameters())) +
+            list(filter(lambda p: p.requires_grad, self.module.cont_covars_regressors.parameters())),
             lr=self.adversary_lr,
             weight_decay=self.adversary_wd)
 
@@ -147,6 +170,7 @@ class CPATrainingPlan(TrainingPlan):
 
                 results = adv_results.copy()
                 results.update({'recon_loss': 0.0})
+                results.update({'cycle_loss': 0.0})
 
             # Model update
             else:
@@ -160,9 +184,17 @@ class CPATrainingPlan(TrainingPlan):
                 latent_basal = inf_outputs['latent_basal']
                 adv_results = self.module.adversarial_loss(tensors=batch, latent_basal=latent_basal)
 
+                reconstruction_loss = reconstruction_loss.mean()
+
                 loss = reconstruction_loss - self.reg_adversary * adv_results['adv_loss']
+
                 if self.variational:
                     loss += self.kl_weight * kl_loss.mean()
+
+                if self.cycle_coeff > 0.0:
+                    cycle_loss = self.module.cycle_regularization(batch, inf_outputs, gen_outputs).mean()
+                    loss += self.cycle_coeff * cycle_loss
+
                 self.manual_backward(loss)
                 opt.step()
                 opt_dosers.step()
@@ -172,10 +204,16 @@ class CPATrainingPlan(TrainingPlan):
 
                 results = adv_results.copy()
 
+                if self.cycle_coeff > 0.0:
+                    results.update({'cycle_loss': cycle_loss.item()})
+                else:
+                    results.update({'cycle_loss': 0.0})
+
                 results.update({'recon_loss': reconstruction_loss.item()})
 
         else:
-            adv_results = {'adv_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0, 'penalty_drugs': 0.0}
+            adv_results = {'adv_loss': 0.0, 'cycle_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0,
+                           'penalty_drugs': 0.0}
             for covar in self.covars_encoder.keys():
                 adv_results[f'adv_{covar}'] = 0.0
                 adv_results[f'penalty_{covar}'] = 0.0
@@ -207,8 +245,8 @@ class CPATrainingPlan(TrainingPlan):
         return results
 
     def training_epoch_end(self, outputs):
-        keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean', 'reg_var',
-                'disent_basal', 'disent_after']
+        keys = ['recon_loss', 'cycle_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean',
+                'reg_var', 'disent_basal', 'disent_after']
         for key in keys:
             self.epoch_history[key].append(np.mean([output[key] for output in outputs]))
 
@@ -221,6 +259,7 @@ class CPATrainingPlan(TrainingPlan):
         self.epoch_history['mode'].append('train')
 
         self.log("recon", self.epoch_history['recon_loss'][-1], prog_bar=True)
+        self.log("cycle_recon", self.epoch_history['cycle_loss'][-1], prog_bar=True)
         # self.log("adv_loss", self.epoch_history['adv_loss'][-1], prog_bar=True)
         # self.log("penalty_adv", self.epoch_history['penalty_adv'][-1], prog_bar=True)
         # self.log("reg_mean", self.epoch_history['reg_mean'][-1], prog_bar=True)
@@ -236,7 +275,6 @@ class CPATrainingPlan(TrainingPlan):
     def get_progress_bar_dict(self):
         items = super().get_progress_bar_dict()
         items.pop('v_num')
-        # items.pop('loss')
         return items
 
     def validation_step(self, batch, batch_idx):
@@ -248,21 +286,12 @@ class CPATrainingPlan(TrainingPlan):
             generative_outputs=gen_outputs,
         )
 
-        # if self.current_epoch >= self.n_epochs_warmup:
-        #     adv_results = self.module.adversarial_loss(
-        #         tensors=batch,
-        #         inference_outputs=inf_outputs,
-        #         generative_outputs=gen_outputs,
-        #     )
-        #     for key, val in adv_results.items():
-        #         adv_results[key] = val.item()
-        # else:
-        adv_results = {'adv_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0, 'penalty_drugs': 0.0}
+        adv_results = {'adv_loss': 0.0, 'cycle_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0, 'penalty_drugs': 0.0}
         for covar in self.covars_encoder.keys():
             adv_results[f'adv_{covar}'] = 0.0
             adv_results[f'penalty_{covar}'] = 0.0
 
-        r2_mean, r2_var = self.module.r2_metric(batch, inf_outputs, gen_outputs)
+        r2_mean, r2_var = self.module.r2_metric(batch, inf_outputs, gen_outputs, method=self.r2_method)
         disent_basal, disent_after = self.module.disentanglement(batch, inf_outputs, gen_outputs)
 
         results = adv_results
@@ -270,15 +299,15 @@ class CPATrainingPlan(TrainingPlan):
         results.update({'disent_basal': disent_basal})
         results.update({'disent_after': disent_after})
         results.update({'recon_loss': reconstruction_loss.item()})
-        results.update({'cpa_metric': r2_mean + r2_var + 1.0 + len(
+        results.update({'cpa_metric': r2_mean + 0.35 * r2_var + 1.0 + len(
             [covar for covar, unique_covars in self.covars_encoder.items() if
              len(unique_covars) > 1]) - disent_basal + disent_after})
 
         return results
 
     def validation_epoch_end(self, outputs):
-        keys = ['recon_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean', 'reg_var',
-                'disent_basal', 'disent_after']
+        keys = ['recon_loss', 'cycle_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean',
+                'reg_var', 'disent_basal', 'disent_after']
         for key in keys:
             self.epoch_history[key].append(np.mean([output[key] for output in outputs]))
 
@@ -295,4 +324,4 @@ class CPATrainingPlan(TrainingPlan):
         self.log('val_disnt_basal', self.epoch_history['disent_basal'][-1], prog_bar=True)
         self.log('val_disnt_after', self.epoch_history['disent_after'][-1], prog_bar=True)
         self.log('val_reg_mean', self.epoch_history['reg_mean'][-1], prog_bar=True)
-        # self.log('val_reg_var', self.epoch_history['reg_var'][-1], prog_bar=True)
+        self.log('val_reg_var', self.epoch_history['reg_var'][-1], prog_bar=True)
