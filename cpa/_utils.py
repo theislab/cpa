@@ -1,6 +1,9 @@
+from typing import List, Dict
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from scvi.distributions import NegativeBinomial
 
 from scvi.nn import FCLayers
 from torch.distributions import Normal
@@ -9,17 +12,14 @@ from torch.distributions import Normal
 class _REGISTRY_KEYS:
     X_KEY: str = "X"
     PERTURBATIONS: str = "drugs_doses"
-    CAT_COVS_KEY: str = "extra_categorical_covs"
-    CONT_COVS_KEY: str = "extra_continuous_covs"
     INDICES_KEY: str = "ind_x"
     SIZE_FACTOR_KEY: str = "size_factor"
-    DRUG_KEY: str = None
-    DOSE_KEY: str = None
-    CONTROL_KEY: str = None
-    COVARS_KEYS: str = []
+    PERTURBATION_KEYS: Dict[str, str] = None
+    CAT_COV_KEYS: List[str] = []
+    CONT_COV_KEYS: List[str] = []
 
 
-REGISTRY_KEYS = _REGISTRY_KEYS()
+CPA_REGISTRY_KEYS = _REGISTRY_KEYS()
 
 
 class VanillaEncoder(nn.Module):
@@ -86,7 +86,7 @@ class DecoderNormal(nn.Module):
             dropout_rate=dropout_rate,
             activation_fn=nn.ReLU,
         )
-        self.mean = nn.Linear(n_hidden, n_output, bias=False)
+        self.mean = nn.Linear(n_hidden, n_output)
         self.var = nn.Linear(n_hidden, n_output, bias=False)
 
     def forward(self, inputs, *cat_list):
@@ -95,9 +95,44 @@ class DecoderNormal(nn.Module):
         var_ = self.var(x)
         if self.output_activation == 'relu':
             locs = F.relu(locs)
+        elif self.output_activation == 'leaky_relu':
+            locs = F.leaky_relu(locs)
 
         variances = var_.exp().add(1).log().add(1e-3)
         return Normal(loc=locs, scale=variances.sqrt())
+
+
+class DecoderNB(nn.Module):
+    def __init__(
+            self,
+            n_input,
+            n_output,
+            n_hidden,
+            n_layers,
+            use_layer_norm=True,
+            use_batch_norm=False,
+            output_activation: str = 'linear',
+            dropout_rate: float = 0.0,
+    ):
+        super().__init__()
+        self.hidden = nn.Sequential(
+            FCLayers(
+                n_in=n_input,
+                n_out=n_output,
+                n_layers=n_layers,
+                n_hidden=n_hidden,
+                use_layer_norm=use_layer_norm,
+                use_batch_norm=use_batch_norm,
+                dropout_rate=dropout_rate,
+                activation_fn=nn.ReLU,
+            ),
+            nn.Softmax(-1),
+        )
+
+    def forward(self, inputs, library, px_r):
+        px_scale = self.hidden(inputs)
+        px_rate = library.exp() * px_scale
+        return NegativeBinomial(mu=px_rate, theta=px_r.exp())
 
 
 class GeneralizedSigmoid(nn.Module):
