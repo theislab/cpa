@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.stats import entropy, itemfreq
+from scipy.stats import entropy
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import LabelEncoder
 
@@ -56,7 +56,7 @@ def entropy_batch_mixing(data, labels,
     """
 
     def __entropy_from_indices(indices, n_cat):
-        return entropy(np.array(itemfreq(indices)[:, 1].astype(np.int32)), base=n_cat)
+        return entropy(np.array(np.unique(indices, return_counts=True)[1].astype(np.int32)), base=n_cat)
 
     n_cat = len(np.unique(labels))
     # print(f'Calculating EBM with n_cat = {n_cat}')
