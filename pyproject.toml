@@ -71,6 +71,7 @@ docs = [
     "jinja2<3.0.3",
     "scanpy",
     "sphinx",
+    "scipy>=1.8.0",
     "scanpydoc",
     "nbsphinx",
     "nbsphinx-link",
@@ -81,7 +82,7 @@ docs = [
     "sphinx_gallery",
     "sphinx-rtd-theme",
 ]
-tutorials = ["scanpy", "leidenalg", "python-igraph", "loompy", "scikit-misc"]
+tutorials = ["scanpy", "leidenalg", "python-igraph", "loompy", "scikit-misc", "scipy>=1.8.0"]
 
 [tool.poetry.dev-dependencies]
 
