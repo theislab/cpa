@@ -193,11 +193,11 @@ class CPA(BaseModelClass):
                            is_count_data=True if use_counts else False),
                 ObsmField('drugs_doses', 'drugs_doses', is_count_data=False, correct_data_format=True)
             ] + \
-            [CategoricalObsField(registry_key=covar, obs_key=covar) for covar in categorical_covariate_keys] + \
-            [NumericalObsField(registry_key=covar, obs_key=covar) for covar in continuous_covariate_keys]
+            [CategoricalObsField(registry_key=covar, attr_key=covar) for covar in categorical_covariate_keys] + \
+            [NumericalObsField(registry_key=covar, atrr_key=covar) for covar in continuous_covariate_keys]
 
         if control_key:
-            anndata_fields.append(NumericalObsField(registry_key='control', obs_key=control_key))
+            anndata_fields.append(NumericalObsField(registry_key='control', attr_key=control_key))
 
         if deg_uns_key:
             mask = np.zeros((adata.n_obs, adata.n_vars))
@@ -293,7 +293,6 @@ class CPA(BaseModelClass):
 
         self.training_plan = CPATrainingPlan(self.module, self.cat_covars_encoders, **plan_kwargs)
         trainer_kwargs["early_stopping"] = False
-        trainer_kwargs.update({'weights_summary': 'top'})
         trainer_kwargs['check_val_every_n_epoch'] = trainer_kwargs.get('check_val_every_n_epoch', 20)
 
         es_callback = EarlyStopping(monitor='cpa_metric',
@@ -322,7 +321,8 @@ class CPA(BaseModelClass):
             use_gpu=use_gpu,
             early_stopping_monitor="cpa_metric",
             early_stopping_mode='max',
-            checkpoint_callback=True,
+            enable_checkpointing=True,
+            enable_model_summary=True,
             **trainer_kwargs,
         )
         runner()

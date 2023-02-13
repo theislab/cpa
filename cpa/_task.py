@@ -4,6 +4,7 @@ import pytorch_lightning
 import torch
 from torch.optim.lr_scheduler import StepLR
 
+from scvi.model._utils import parse_use_gpu_arg
 from scvi.module.base import BaseModuleClass
 from scvi.train import TrainingPlan
 
@@ -77,6 +78,9 @@ class CPATrainingPlan(TrainingPlan):
 
         self.automatic_optimization = False
         self.iter_count = 0
+
+        device = parse_use_gpu_arg(True)
+        self.onlyFloat32 = device[0] == "mps"
 
         self.epoch_history = {
             'mode': [],
@@ -258,8 +262,15 @@ class CPATrainingPlan(TrainingPlan):
         self.epoch_history['epoch'].append(self.current_epoch)
         self.epoch_history['mode'].append('train')
 
-        self.log("recon", self.epoch_history['recon_loss'][-1], prog_bar=True)
-        self.log("cycle_recon", self.epoch_history['cycle_loss'][-1], prog_bar=True)
+      
+        if self.onlyFloat32:
+            self.log("recon", np.float32(self.epoch_history['recon_loss'][-1]), prog_bar=True)
+            self.log("cycle_recon", np.float32(self.epoch_history['cycle_loss'][-1]), prog_bar=True)
+        else:
+            self.log("recon", self.epoch_history['recon_loss'][-1], prog_bar=True)
+            self.log("cycle_recon", self.epoch_history['cycle_loss'][-1], prog_bar=True)
+
+
         # self.log("adv_loss", self.epoch_history['adv_loss'][-1], prog_bar=True)
         # self.log("penalty_adv", self.epoch_history['penalty_adv'][-1], prog_bar=True)
         # self.log("reg_mean", self.epoch_history['reg_mean'][-1], prog_bar=True)

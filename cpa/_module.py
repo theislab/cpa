@@ -128,7 +128,7 @@ class CPAModule(BaseModuleClass):
                 dropout_rate=dropout_rate,
                 activation_fn=nn.ReLU,
             )
-
+    
             # Decoder components
             self.px_r = torch.nn.Parameter(torch.randn(n_genes))
 
@@ -234,6 +234,7 @@ class CPAModule(BaseModuleClass):
 
         self.adv_loss_drugs = nn.BCEWithLogitsLoss()
 
+
     def _get_inference_input(self, tensors):
         x = tensors[CPA_REGISTRY_KEYS.X_KEY]  # batch_size, n_genes
         drugs_doses = tensors['drugs_doses']
@@ -272,6 +273,7 @@ class CPAModule(BaseModuleClass):
         if self.loss_ae == 'nb':
             x_ = torch.log1p(x_)
 
+        print("cpa.module: inference: self.variational",self.variational,self.encoder)
         if self.variational:
             z_means, z_vars, latent_basal = self.encoder(x_)
             basal_distribution = db.Normal(z_means, z_vars.sqrt())
