@@ -273,7 +273,6 @@ class CPAModule(BaseModuleClass):
         if self.loss_ae == 'nb':
             x_ = torch.log1p(x_)
 
-        print("cpa.module: inference: self.variational",self.variational,self.encoder)
         if self.variational:
             z_means, z_vars, latent_basal = self.encoder(x_)
             basal_distribution = db.Normal(z_means, z_vars.sqrt())
