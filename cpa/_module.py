@@ -128,7 +128,7 @@ class CPAModule(BaseModuleClass):
                 dropout_rate=dropout_rate,
                 activation_fn=nn.ReLU,
             )
-
+    
             # Decoder components
             self.px_r = torch.nn.Parameter(torch.randn(n_genes))
 
@@ -233,6 +233,7 @@ class CPAModule(BaseModuleClass):
         self.adv_loss_cont_covariates = nn.MSELoss()
 
         self.adv_loss_drugs = nn.BCEWithLogitsLoss()
+
 
     def _get_inference_input(self, tensors):
         x = tensors[CPA_REGISTRY_KEYS.X_KEY]  # batch_size, n_genes
