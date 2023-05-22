@@ -36,6 +36,7 @@ class AnnDataSplitter(DataSplitter):
                 indices=self.train_idx,
                 shuffle=True,
                 pin_memory=self.pin_memory,
+                drop_last=True,
                 **self.data_loader_kwargs,
             )
         else:

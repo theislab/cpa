@@ -393,11 +393,14 @@ class CPA(BaseModelClass):
         Tuple
             Gene expression means and standard variations
         """
+        k0 = list(self._per_instance_manager_store.keys())[0]
+        adata_keys = set(self._per_instance_manager_store[k0].keys())
+        
         assert self.module.loss_ae in ["gauss", 'mse']
         self.module.eval()
 
         # adata = self.adata if adata is None else adata
-        adata = self._validate_anndata(adata)
+        adata = self._validate_anndata(adata, copy_if_view=False)
         if indices is None:
             indices = np.arange(adata.n_obs)
         scdl = self._make_data_loader(
@@ -410,6 +413,13 @@ class CPA(BaseModelClass):
             mus.append(_mus.detach().cpu().numpy())
             stds.append(_stds.detach().cpu().numpy())
 
+        keys_del = []
+        for k in self._per_instance_manager_store[k0]:
+            if not k in adata_keys:
+                keys_del.append(k)
+        for k in keys_del:
+            del self._per_instance_manager_store[k0][k]
+        
         pred_adata_mean = AnnData(X=np.concatenate(mus, axis=0), obs=adata.obs.copy())
         pred_adata_var = AnnData(X=np.concatenate(stds, axis=0), obs=adata.obs.copy())
 

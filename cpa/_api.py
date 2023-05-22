@@ -8,6 +8,7 @@ import pandas as pd
 import scanpy as sc
 import torch
 from anndata import AnnData
+import anndata
 from sklearn.metrics import r2_score
 from sklearn.metrics.pairwise import cosine_distances, euclidean_distances
 
@@ -356,7 +357,7 @@ class ComPertAPI:
 
                 tmp_ad_list.append(tmp_ad)
 
-        self.comb_emb = tmp_ad_list[0].concatenate(tmp_ad_list[1:])
+        self.comb_emb = anndata.concat(tmp_ad_list)
 
     def compute_uncertainty(
             self,
@@ -461,7 +462,7 @@ class ComPertAPI:
         gene_means_list = []
         gene_vars_list = []
         df_list = []
-
+        
         for i in range(len(df)):
             comb_name = df.loc[i][self.perturbation_key]
             dose_name = df.loc[i][self.dose_key]
@@ -472,12 +473,23 @@ class ComPertAPI:
                                       self.dose_key: [dose_name] * num,
                                       self.control_key: [0] * num,
                                       })
+            
 
             feed_adata.obsm['drugs_doses'] = self.get_drug_encoding_(comb_name, dose_name).repeat(num, axis=0)
 
             for idx, covar in enumerate(covars_name):
                 feed_adata.obs[self.covars_key[idx]] = [covar] * num
 
+            
+            # CPA.setup_anndata(feed_adata.copy(),
+            #                   perturbation_keys={
+            #                       'perturbation': self.perturbation_key,
+            #                       'dosage': self.dose_key
+            #                   },
+            #                   control_key=self.control_key,
+            #                   categorical_covariate_keys=list(self.covars_key),
+            # )
+            
             pred_adata_mean, pred_adata_var = self.model.predict(feed_adata)
 
             gene_means_list.append(pred_adata_mean.X)
