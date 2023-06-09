@@ -51,13 +51,13 @@ class ComPertAPI:
 
         self.unique_perts = list(model.drug_encoder.keys())
         self.unique_covars = {}
-        for covar in model.cat_covars_encoders.keys():
-            self.unique_covars[covar] = list(model.cat_covars_encoders[covar].keys())
+        for covar in model.covars_encoder.keys():
+            self.unique_covars[covar] = list(model.covars_encoder[covar].keys())
 
         self.num_drugs = len(model.drug_encoder)
 
         self.perts_dict = model.drug_encoder.copy()
-        self.covars_dict = model.cat_covars_encoders.copy()
+        self.covars_dict = model.covars_encoder.copy()
 
         self.emb_covars = None
         self.emb_perts = None
@@ -247,10 +247,10 @@ class ComPertAPI:
             d = self.perts_dict[drug]
             this_drug = torch.Tensor(dose).to(self.model.device).view(-1, 1)
             if self.model.module.doser_type == 'mlp':
-                response = (self.model.module.drug_network.dosers[d](this_drug).sigmoid() * this_drug.gt(
+                response = (self.model.module.pert_network.dosers[d](this_drug).sigmoid() * this_drug.gt(
                     0)).cpu().clone().detach().numpy().reshape(-1)
             else:
-                response = self.model.module.drug_network.dosers.one_drug(this_drug.view(-1),
+                response = self.model.module.pert_network.dosers.one_drug(this_drug.view(-1),
                                                                           d).cpu().clone().detach().numpy().reshape(-1)
 
             df_drug = pd.DataFrame(list(zip([drug] * n_points, dose, list(response))),
@@ -295,10 +295,10 @@ class ComPertAPI:
             d = self.perts_dict[drug]
             this_drug = torch.Tensor(dose).to(self.model.device).view(-1, 1)
             if self.model.module.doser_type == 'mlp':
-                response[drug] = (self.model.module.drug_network.dosers[d](this_drug).sigmoid() * this_drug.gt(
+                response[drug] = (self.model.module.pert_network.dosers[d](this_drug).sigmoid() * this_drug.gt(
                     0)).cpu().clone().detach().numpy().reshape(-1)
             else:
-                response[drug] = self.model.module.drug_network.dosers.one_drug(this_drug.view(-1),
+                response[drug] = self.model.module.pert_network.dosers.one_drug(this_drug.view(-1),
                                                                                 d).cpu().clone().detach().numpy().reshape(
                     -1)
 

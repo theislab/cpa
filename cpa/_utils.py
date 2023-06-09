@@ -7,16 +7,24 @@ from scvi.distributions import NegativeBinomial
 
 from scvi.nn import FCLayers
 from torch.distributions import Normal
+from typing import Optional
 
 
 class _REGISTRY_KEYS:
     X_KEY: str = "X"
-    PERTURBATIONS: str = "drugs_doses"
-    INDICES_KEY: str = "ind_x"
+    X_CTRL_KEY: str = None
+    BATCH_KEY: str = "cpa_batch"
+    CATEGORY_KEY: str = "cpa_category"
+    PERTURBATION_KEY: str = None
+    PERTURBATIONS: str = "perts"
+    PERTURBATIONS_DOSAGES: str = "perts_doses"
     SIZE_FACTOR_KEY: str = "size_factor"
-    PERTURBATION_KEYS: Dict[str, str] = None
     CAT_COV_KEYS: List[str] = []
-    CONT_COV_KEYS: List[str] = []
+    MAX_COMB_LENGTH: int = 2
+    CONTROL_KEY: str = None
+    DEG_MASK: str = None
+    DEG_MASK_R2: str = None
+    PADDING_IDX: int = 0
 
 
 CPA_REGISTRY_KEYS = _REGISTRY_KEYS()
@@ -58,83 +66,6 @@ class VanillaEncoder(nn.Module):
         return z
 
 
-class DecoderNormal(nn.Module):
-    def __init__(
-            self,
-            n_input,
-            n_output,
-            n_hidden,
-            n_layers,
-            n_cat_list,
-            use_layer_norm=True,
-            use_batch_norm=False,
-            output_activation: str = 'linear',
-            dropout_rate: float = 0.1,
-    ):
-        super().__init__()
-        self.n_output = n_output
-        self.output_activation = output_activation
-
-        self.network = FCLayers(
-            n_in=n_input,
-            n_out=n_hidden,
-            n_cat_list=n_cat_list,
-            n_layers=n_layers,
-            n_hidden=n_hidden,
-            use_layer_norm=use_layer_norm,
-            use_batch_norm=use_batch_norm,
-            dropout_rate=dropout_rate,
-            activation_fn=nn.ReLU,
-        )
-        self.mean = nn.Linear(n_hidden, n_output)
-        self.var = nn.Linear(n_hidden, n_output, bias=False)
-
-    def forward(self, inputs, *cat_list):
-        x = self.network(inputs, *cat_list)
-        locs = self.mean(x)
-        var_ = self.var(x)
-        if self.output_activation == 'relu':
-            locs = F.relu(locs)
-        elif self.output_activation == 'leaky_relu':
-            locs = F.leaky_relu(locs)
-
-        variances = var_.exp().add(1).log().add(1e-3)
-        return Normal(loc=locs, scale=variances.sqrt())
-
-
-class DecoderNB(nn.Module):
-    def __init__(
-            self,
-            n_input,
-            n_output,
-            n_hidden,
-            n_layers,
-            use_layer_norm=True,
-            use_batch_norm=False,
-            output_activation: str = 'linear',
-            dropout_rate: float = 0.0,
-    ):
-        super().__init__()
-        self.hidden = nn.Sequential(
-            FCLayers(
-                n_in=n_input,
-                n_out=n_output,
-                n_layers=n_layers,
-                n_hidden=n_hidden,
-                use_layer_norm=use_layer_norm,
-                use_batch_norm=use_batch_norm,
-                dropout_rate=dropout_rate,
-                activation_fn=nn.ReLU,
-            ),
-            nn.Softmax(-1),
-        )
-
-    def forward(self, inputs, library, px_r):
-        px_scale = self.hidden(inputs)
-        px_rate = library.exp() * px_scale
-        return NegativeBinomial(mu=px_rate, theta=px_r.exp())
-
-
 class GeneralizedSigmoid(nn.Module):
     """
     Sigmoid, log-sigmoid or linear functions for encoding dose-response for
@@ -162,32 +93,24 @@ class GeneralizedSigmoid(nn.Module):
 
         self.vmap = None
 
-    def forward(self, x, y=None):
+    def forward(self, x, y):
         """
             Parameters
             ----------
-            x: (batch_size, n_drugs) or (batch_size, )
-                Doses matrix
-            y: (batch_size, )
+            x: (batch_size, max_comb_len)
+            y: (batch_size, max_comb_len)
         """
+        y = y.long()
         if self.non_linearity == 'logsigm':
-            if y is None:
-                c0 = self.bias.sigmoid()
-                return (torch.log1p(x) * self.beta + self.bias).sigmoid() - c0
-            else:
-                bias = self.bias[0][y]
-                beta = self.beta[0][y]
-                c0 = bias.sigmoid()
-                return (torch.log1p(x) * beta + bias).sigmoid() - c0
+            bias = self.bias[0][y]
+            beta = self.beta[0][y]
+            c0 = bias.sigmoid()
+            return (torch.log1p(x) * beta + bias).sigmoid() - c0
         elif self.non_linearity == 'sigm':
-            if y is None:
-                c0 = self.bias.sigmoid()
-                return (x * self.beta + self.bias).sigmoid() - c0
-            else:
-                bias = self.bias[0][y]
-                beta = self.beta[0][y]
-                c0 = bias.sigmoid()
-                return (x * beta + bias).sigmoid() - c0
+            bias = self.bias[0][y]
+            beta = self.beta[0][y]
+            c0 = bias.sigmoid()
+            return (x * beta + bias).sigmoid() - c0
         else:
             return x
 
@@ -202,20 +125,21 @@ class GeneralizedSigmoid(nn.Module):
             return x
 
 
-class DrugNetwork(nn.Module):
-    def __init__(self, n_drugs,
+class PerturbationNetwork(nn.Module):
+    def __init__(self,
+                 n_perts,
                  n_latent,
                  doser_type='logsigm',
                  n_hidden=None,
                  n_layers=None,
-                 dropout_rate: float = 0.1):
+                 dropout_rate: float = 0.0):
         super().__init__()
         self.n_latent = n_latent
-        self.drug_embedding = nn.Embedding(n_drugs, n_latent)
+        self.pert_embedding = nn.Embedding(n_perts + 1, n_latent, padding_idx=CPA_REGISTRY_KEYS.PADDING_IDX)
         self.doser_type = doser_type
         if self.doser_type == 'mlp':
             self.dosers = nn.ModuleList()
-            for _ in range(n_drugs):
+            for _ in range(n_perts):
                 self.dosers.append(
                     FCLayers(
                         n_in=1,
@@ -223,30 +147,89 @@ class DrugNetwork(nn.Module):
                         n_hidden=n_hidden,
                         n_layers=n_layers,
                         use_batch_norm=False,
-                        use_layer_norm=False,
+                        use_layer_norm=True,
                         dropout_rate=dropout_rate
                     )
                 )
         else:
-            self.dosers = GeneralizedSigmoid(n_drugs, non_linearity=self.doser_type)
+            self.dosers = GeneralizedSigmoid(n_perts, non_linearity=self.doser_type)
 
-    def forward(self, drugs, doses=None):
+    def forward(self, perts, dosages):
         """
-            drugs: (batch_size, n_drugs) if combinatorial else (batch_size, )
-                OneHot multiplied by doses if combinatorial is True
+            perts: (batch_size, max_comb_len)
+            dosages: (batch_size, max_comb_len)
         """
-        if self.doser_type == 'mlp':
-            doses = []
-            for d in range(drugs.size(1)):
-                this_drug = drugs[:, d].view(-1, 1)
-                doses.append(self.dosers[d](this_drug).sigmoid() * this_drug.gt(0))
-            return torch.cat(doses, 1) @ self.drug_embedding.weight
-        else:
-            if doses is not None:
-                drugs = drugs.long().view(-1, )
-                doses = doses.float().view(-1, )
-                scaled_dosages = self.dosers(doses, drugs)
-                drug_embeddings = self.drug_embedding(drugs)
-                return torch.einsum('b,be->be', [scaled_dosages, drug_embeddings])
-            else:
-                return self.dosers(drugs) @ self.drug_embedding.weight
+        perts = perts.long()
+        scaled_dosages = self.dosers(dosages, perts)  # (batch_size, max_comb_len)
+        drug_embeddings = self.pert_embedding(perts)  # (batch_size, max_comb_len, n_latent)
+
+        z_drugs = torch.einsum('bm,bme->bme', [scaled_dosages, drug_embeddings])  # (batch_size, n_latent)
+
+        z_drugs = torch.einsum('bmn,bm->bmn', z_drugs, (perts > 0).int()).sum(dim=1)  # mask single perts
+
+        return z_drugs
+
+class FocalLoss(nn.Module):
+    """ Inspired by https://github.com/AdeelH/pytorch-multi-class-focal-loss/blob/master/focal_loss.py
+
+    Focal Loss, as described in https://arxiv.org/abs/1708.02002.
+    It is essentially an enhancement to cross entropy loss and is
+    useful for classification tasks when there is a large class imbalance.
+    x is expected to contain raw, unnormalized scores for each class.
+    y is expected to contain class labels.
+    Shape:
+        - x: (batch_size, C) or (batch_size, C, d1, d2, ..., dK), K > 0.
+        - y: (batch_size,) or (batch_size, d1, d2, ..., dK), K > 0.
+    """
+
+    def __init__(self,
+                 alpha: Optional[torch.Tensor] = None,
+                 gamma: float = 2.,
+                 reduction: str = 'mean',
+                 ):
+        """
+        Args:
+            alpha (Tensor, optional): Weights for each class. Defaults to None.
+            gamma (float, optional): A constant, as described in the paper.
+                Defaults to 0.
+            reduction (str, optional): 'mean', 'sum' or 'none'.
+                Defaults to 'mean'.
+        """
+        if reduction not in ('mean', 'sum', 'none'):
+            raise ValueError(
+                'Reduction must be one of: "mean", "sum", "none".')
+
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+        self.nll_loss = nn.NLLLoss(
+            weight=alpha, reduction='none')
+
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
+        if len(y_true) == 0:
+            return torch.tensor(0.)
+
+        # compute weighted cross entropy term: -alpha * log(pt)
+        # (alpha is already part of self.nll_loss)
+        log_p = F.log_softmax(y_pred, dim=-1)
+        ce = self.nll_loss(log_p, y_true)
+
+        # get true class column from each row
+        all_rows = torch.arange(len(y_pred))
+        log_pt = log_p[all_rows, y_true]
+
+        # compute focal term: (1 - pt)^gamma
+        pt = log_pt.exp()
+        focal_term = (1 - pt) ** self.gamma
+
+        # the full loss: -alpha * ((1 - pt)^gamma) * log(pt)
+        loss = focal_term * ce
+
+        if self.reduction == 'mean':
+            loss = loss.mean()
+        elif self.reduction == 'sum':
+            loss = loss.sum()
+
+        return loss

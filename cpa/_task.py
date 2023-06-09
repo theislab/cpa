@@ -1,15 +1,21 @@
+import math
+
+from collections import defaultdict
 from typing import Union
 
-import pytorch_lightning
 import torch
+from scvi.module import Classifier
+from torch import nn
 from torch.optim.lr_scheduler import StepLR
 
-from scvi.module.base import BaseModuleClass
 from scvi.train import TrainingPlan
 
 import numpy as np
+from torchmetrics.functional import accuracy
 
 from ._module import CPAModule
+from ._utils import CPA_REGISTRY_KEYS, FocalLoss
+from typing import Optional
 
 
 class CPATrainingPlan(TrainingPlan):
@@ -17,29 +23,41 @@ class CPATrainingPlan(TrainingPlan):
             self,
             module: CPAModule,
             covars_to_ncovars: dict,
-            autoencoder_lr=3e-4,
-            n_steps_kl_warmup: Union[int, None] = None,
-            n_epochs_kl_warmup: Union[int, None] = None,
-            n_epochs_warmup: Union[int, None] = None,
-            adversary_steps: int = 3,
-            reg_adversary: float = 60,
-            penalty_adversary: float = 60,
-            cycle_coeff: float = 0.0,
-            dosers_lr=4e-3,
-            dosers_wd=1e-7,
-            adversary_lr=3e-4,
-            adversary_wd=4e-7,
-            autoencoder_wd=4e-7,
-            step_size_lr: int = 45,
-            batch_size: int = 256,
-            variational: bool = False,
-            r2_method: str = 'cycle',
+            n_adv_perts: int,
+            lr=5e-4,
+            wd=1e-6,
+            n_steps_pretrain_ae: Optional[int] = None,
+            n_epochs_pretrain_ae: Optional[int] = None,
+            n_steps_kl_warmup: Optional[int] = None,
+            n_epochs_kl_warmup: Optional[int] = None,
+            n_steps_adv_warmup: Optional[int] = None,
+            n_epochs_adv_warmup: Optional[int] = None,
+            n_epochs_mixup_warmup: Optional[int] = None,
+            n_epochs_verbose: Optional[int] = 10,
+            mixup_alpha: float = 0.0,
+            adv_steps: int = 3,
+            reg_adv: float = 1.,
+            pen_adv: float = 1.,
+            n_hidden_adv: int = 64,
+            n_layers_adv: int = 3,
+            use_batch_norm_adv: bool = True,
+            use_layer_norm_adv: bool = False,
+            dropout_rate_adv: float = 0.1,
+            adv_lr=3e-4,
+            adv_wd=1e-6,
+            doser_lr=1e-4,
+            doser_wd=1e-6,
+            step_size_lr: Optional[int] = 45,
+            do_clip_grad: Optional[bool] = False,
+            gradient_clip_value: Optional[float] = 3.0,
+            drug_weights: Optional[list] = None,
+            adv_loss: Optional[str] = 'focal',
     ):
         """Training plan for the CPA model"""
         super().__init__(
             module=module,
-            lr=autoencoder_lr,
-            weight_decay=autoencoder_wd,
+            lr=lr,
+            weight_decay=wd,
             n_steps_kl_warmup=n_steps_kl_warmup,
             n_epochs_kl_warmup=n_epochs_kl_warmup,
             reduce_lr_on_plateau=False,
@@ -50,278 +68,527 @@ class CPATrainingPlan(TrainingPlan):
             lr_min=None,
         )
 
-        self.n_epochs_warmup = n_epochs_warmup if n_epochs_warmup is not None else 0
+        self.automatic_optimization = False
+
+        self.wd = wd
 
         self.covars_encoder = covars_to_ncovars
 
-        self.autoencoder_wd = autoencoder_wd
-        self.autoencoder_lr = autoencoder_lr
+        self.mixup_alpha = mixup_alpha
+        self.n_epochs_mixup_warmup = n_epochs_mixup_warmup
 
-        self.adversary_lr = adversary_lr
-        self.adversary_wd = adversary_wd
-        self.adversary_steps = adversary_steps
-        self.reg_adversary = reg_adversary
-        self.penalty_adversary = penalty_adversary
+        self.n_steps_pretrain_ae = n_steps_pretrain_ae
+        self.n_epochs_pretrain_ae = n_epochs_pretrain_ae
 
-        self.dosers_lr = dosers_lr
-        self.dosers_wd = dosers_wd
+        self.n_steps_adv_warmup = n_steps_adv_warmup
+        self.n_epochs_adv_warmup = n_epochs_adv_warmup
+
+        self.n_epochs_verbose = n_epochs_verbose
+
+        self.adv_steps = adv_steps
+
+        self.reg_adv = reg_adv
+        self.pen_adv = pen_adv
+
+        self.adv_lr = adv_lr
+        self.adv_wd = adv_wd
+
+        self.doser_lr = doser_lr
+        self.doser_wd = doser_wd
 
         self.step_size_lr = step_size_lr
 
-        self.batch_size = batch_size
+        self.do_clip_grad = do_clip_grad
+        self.gradient_clip_value = gradient_clip_value
 
-        self.variational = variational
+        self.metrics = ['recon_loss', 'KL',
+                        'disnt_basal', 'disnt_after',
+                        'r2_mean', 'r2_var',
+                        'adv_loss', 'penalty_adv', 'adv_perts', 'acc_perts', 'penalty_perts']
 
-        self.cycle_coeff = cycle_coeff
-        self.r2_method = r2_method
+        self.epoch_history = defaultdict(list)
+        self.n_adv_perts = n_adv_perts
 
-        self.automatic_optimization = False
-        self.iter_count = 0
+        self.perturbation_classifier = Classifier(
+            n_input=self.module.n_latent,
+            n_labels=n_adv_perts,
+            n_hidden=n_hidden_adv,
+            n_layers=n_layers_adv,
+            use_batch_norm=use_batch_norm_adv,
+            use_layer_norm=use_layer_norm_adv,
+            dropout_rate=dropout_rate_adv,
+            activation_fn=nn.ReLU,
+            logits=True,
+        )
 
-        self.epoch_history = {
-            'mode': [],
-            'epoch': [],
-            'recon_loss': [],
-            'adv_loss': [],
-            'cycle_loss': [],
-            'penalty_adv': [],
-            'adv_drugs': [],
-            'penalty_drugs': [],
-            'reg_mean': [],
-            'reg_var': [],
-            'disent_basal': [],
-            'disent_after': [],
-        }
+        self.covars_classifiers = nn.ModuleDict(
+            {
+                key: Classifier(n_input=self.module.n_latent,
+                                n_labels=len(unique_covars),
+                                n_hidden=self.n_hidden_adv,
+                                n_layers=self.n_layers_adv,
+                                use_batch_norm=use_batch_norm_adv,
+                                use_layer_norm=use_layer_norm_adv,
+                                dropout_rate=dropout_rate_adv,
+                                logits=True)
+                if len(unique_covars) > 1 else None
 
-        for covar in self.covars_encoder.keys():
-            self.epoch_history[f'adv_{covar}'] = []
-            self.epoch_history[f'penalty_{covar}'] = []
+                for key, unique_covars in self.covars_encoder.items()
+            }
+        )
 
-    def configure_optimizers(self):
-        if hasattr(self.module.drug_network, 'drug_encoder'):
-            optimizer_autoencoder = torch.optim.Adam(
-                list(filter(lambda p: p.requires_grad, self.module.encoder.parameters())) +
-                list(filter(lambda p: p.requires_grad, self.module.decoder.parameters())) +
-                list(filter(lambda p: p.requires_grad, self.module.cat_covars_embeddings.parameters())) +
-                list(filter(lambda p: p.requires_grad, self.module.cont_covars_embeddings.parameters())) +
-                list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_embedding.parameters())) +
-                list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_encoder.parameters())),
-                lr=self.autoencoder_lr,
-                weight_decay=self.autoencoder_wd)
+        self.drug_weights = torch.tensor(drug_weights).to(self.device) if drug_weights else torch.ones(
+            self.n_adv_perts).to(self.device)
+
+        self.adv_loss = adv_loss.lower()
+        self.gamma = 2.0
+        if self.adv_loss == 'cce':
+            self.adv_loss_drugs = nn.CrossEntropyLoss(weight=self.drug_weights)
+            self.adv_loss_fn = nn.CrossEntropyLoss()
+        elif self.adv_loss == 'focal':
+            self.adv_loss_drugs = FocalLoss(alpha=self.drug_weights, gamma=self.gamma, reduction='mean')
+            self.adv_loss_fn = FocalLoss(gamma=self.gamma, reduction='mean')
+        
+    @property
+    def adv_lambda(self):
+        slope = self.reg_adv
+        if self.n_steps_adv_warmup:
+            global_step = self.global_step
+
+            if self.n_steps_pretrain_ae:
+                 global_step -= self.n_steps_pretrain_ae
+
+            if global_step <= self.n_steps_adv_warmup:
+                proportion = global_step / self.n_steps_adv_warmup
+                return slope * proportion
+            else:
+                return slope
+        elif self.n_epochs_adv_warmup is not None:
+            current_epoch = self.current_epoch
+
+            if self.n_epochs_pretrain_ae:
+                current_epoch -= self.n_epochs_pretrain_ae
+
+            if current_epoch <= self.n_epochs_adv_warmup:
+                proportion = current_epoch / self.n_epochs_adv_warmup
+                return slope * proportion
+            else:
+                return slope
         else:
-            if self.module.loss_ae in ['gauss', 'mse']:
-                optimizer_autoencoder = torch.optim.Adam(
-                    list(filter(lambda p: p.requires_grad, self.module.encoder.parameters())) +
-                    list(filter(lambda p: p.requires_grad, self.module.decoder.parameters())) +
-                    list(filter(lambda p: p.requires_grad, self.module.cat_covars_embeddings.parameters())) +
-                    list(filter(lambda p: p.requires_grad, self.module.cont_covars_embeddings.parameters())) +
-                    list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_embedding.parameters())),
-                    lr=self.autoencoder_lr,
-                    weight_decay=self.autoencoder_wd)
-            elif self.module.loss_ae == 'nb':
-                optimizer_autoencoder = torch.optim.Adam(
-                    list(filter(lambda p: p.requires_grad, self.module.encoder.parameters())) +
-                    list(filter(lambda p: p.requires_grad, self.module.l_encoder.parameters())) +
-                    list(filter(lambda p: p.requires_grad, self.module.decoder.parameters())) +
-                    list(filter(lambda p: p.requires_grad, self.module.cat_covars_embeddings.parameters())) +
-                    list(filter(lambda p: p.requires_grad, self.module.cont_covars_embeddings.parameters())) +
-                    list(filter(lambda p: p.requires_grad, self.module.drug_network.drug_embedding.parameters())),
-                    lr=self.autoencoder_lr,
-                    weight_decay=self.autoencoder_wd)
+            return slope
+
+    @property
+    def alpha_mixup(self):
+        if self.n_epochs_mixup_warmup:
+            current_epoch = self.current_epoch
+
+            if self.n_epochs_pretrain_ae:
+                current_epoch -= self.current_epoch
+
+            if current_epoch <= self.n_epochs_mixup_warmup:
+                proportion = current_epoch / self.n_epochs_mixup_warmup
+
+                return self.mixup_alpha * proportion
+            else:
+                return self.mixup_alpha
+        else:
+            return self.mixup_alpha
+
+    @property
+    def do_start_adv_training(self):
+        if self.n_steps_pretrain_ae:
+            return self.global_step > self.n_steps_pretrain_ae
+        elif self.n_epochs_pretrain_ae:
+            return self.current_epoch > self.n_epochs_pretrain_ae
+        else:
+            return True
+
+    def adversarial_loss(self, tensors, z_basal, mixup_lambda: float = 1.0, compute_penalty=True):
+        """Computes adversarial classification losses and regularizations"""
+        if compute_penalty:
+            z_basal = z_basal.requires_grad_(True)
+
+        covars_dict = dict()
+        for covar, unique_covars in self.covars_encoder.items():
+            encoded_covars = tensors[covar].view(-1, )  # (batch_size,)
+            covars_dict[covar] = encoded_covars
+
+        covars_pred = {}
+        for covar in self.covars_encoder.keys():
+            if self.covars_classifiers[covar] is not None:
+                covar_pred = self.covars_classifiers[covar](z_basal)
+                covars_pred[covar] = covar_pred
+            else:
+                covars_pred[covar] = None
+
+        adv_results = {}
+
+        # Classification losses for different covariates
+        for covar, covars in self.covars_encoder.items():
+            adv_results[f'adv_{covar}'] = mixup_lambda * self.adv_loss_fn(
+                covars_pred[covar],
+                covars_dict[covar].long(),
+            ) if covars_pred[covar] is not None else torch.as_tensor(0.0).to(self.device) + (
+                    1. - mixup_lambda) * self.adv_loss_fn(
+                covars_pred[covar],
+                covars_dict[covar + '_mixup'].long(),
+            ) if covars_pred[covar] is not None else torch.as_tensor(0.0).to(self.device)
+            adv_results[f'acc_{covar}'] = accuracy(
+                covars_pred[covar].argmax(1), covars_dict[covar].long(), task='multiclass',
+                num_classes=len(covars)) \
+                if covars_pred[covar] is not None else torch.as_tensor(0.0).to(self.device)
+
+        adv_results['adv_loss'] = sum([adv_results[f'adv_{key}'] for key in self.covars_encoder.keys()])
+
+        perturbations = tensors[CPA_REGISTRY_KEYS.PERTURBATION_KEY].view(-1, )
+        perturbations_mixup = tensors[CPA_REGISTRY_KEYS.PERTURBATION_KEY + '_mixup'].view(-1, )
+
+        perturbations_pred = self.perturbation_classifier(z_basal)
+
+        adv_results['adv_perts'] = mixup_lambda * self.adv_loss_drugs(perturbations_pred,
+                                                                      perturbations.long()) + (
+                                           1. - mixup_lambda) * self.adv_loss_drugs(perturbations_pred,
+                                                                                    perturbations_mixup.long())
+
+        adv_results['acc_perts'] = mixup_lambda * accuracy(
+            perturbations_pred.argmax(1), perturbations.long().view(-1, ), average='macro',
+            num_classes=self.n_adv_perts, task='multiclass',
+        ) + (1. - mixup_lambda) * accuracy(
+            perturbations_pred.argmax(1), perturbations_mixup.long().view(-1, ), average='macro',
+            num_classes=self.n_adv_perts, task='multiclass',
+        )
+
+        adv_results['adv_loss'] += adv_results['adv_perts']
+
+        if compute_penalty:
+            # Penalty losses
+            for covar in self.covars_encoder.keys():
+                adv_results[f'penalty_{covar}'] = (
+                    torch.autograd.grad(
+                        covars_pred[covar].sum(),
+                        z_basal,
+                        create_graph=True,
+                        retain_graph=True,
+                        only_inputs=True,
+                    )[0].pow(2).mean()
+                ) if covars_pred[covar] is not None else torch.as_tensor(0.0).to(self.device)
+
+            adv_results['penalty_adv'] = sum([adv_results[f'penalty_{covar}'] for covar in self.covars_encoder.keys()])
+
+            adv_results['penalty_perts'] = (
+                torch.autograd.grad(
+                    perturbations_pred.sum(),
+                    z_basal,
+                    create_graph=True,
+                    retain_graph=True,
+                    only_inputs=True,
+                )[0].pow(2).mean()
+            )
+
+            adv_results['penalty_adv'] += adv_results['penalty_perts']
+        else:
+            for covar in self.covars_encoder.keys():
+                adv_results[f'penalty_{covar}'] = torch.as_tensor(0.0).to(self.device)
+
+            adv_results['penalty_perts'] = torch.as_tensor(0.0).to(self.device)
+            adv_results['penalty_adv'] = torch.as_tensor(0.0).to(self.device)
+
+        return adv_results
+    
+    def configure_optimizers(self):
+        ae_params = list(filter(lambda p: p.requires_grad, self.module.encoder.parameters())) + \
+                    list(filter(lambda p: p.requires_grad, self.module.decoder.parameters())) + \
+                    list(filter(lambda p: p.requires_grad, self.module.pert_network.pert_embedding.parameters())) + \
+                    list(filter(lambda p: p.requires_grad, self.module.covars_embeddings.parameters()))
+
+        if self.module.recon_loss in ['zinb', 'nb']:
+            ae_params += list(filter(lambda p: p.requires_grad, self.module.library_encoder.parameters())) + \
+                         [self.module.px_r]
+
+        optimizer_autoencoder = torch.optim.Adam(
+            ae_params,
+            lr=self.lr,
+            weight_decay=self.wd)
+
+        scheduler_autoencoder = StepLR(optimizer_autoencoder, step_size=self.step_size_lr, gamma=0.9)
+
+        doser_params = list(filter(lambda p: p.requires_grad, self.module.pert_network.dosers.parameters()))
+        optimizer_doser = torch.optim.Adam(
+            doser_params, lr=self.doser_lr, weight_decay=self.doser_wd,
+        )
+        scheduler_doser = StepLR(optimizer_doser, step_size=self.step_size_lr, gamma=0.9)
+
+        adv_params = list(filter(lambda p: p.requires_grad, self.perturbation_classifier.parameters())) + \
+                     list(filter(lambda p: p.requires_grad, self.covars_classifiers.parameters()))
 
         optimizer_adversaries = torch.optim.Adam(
-            list(filter(lambda p: p.requires_grad, self.module.drugs_classifier.parameters())) +
-            list(filter(lambda p: p.requires_grad, self.module.cat_covars_classifiers.parameters())) +
-            list(filter(lambda p: p.requires_grad, self.module.cont_covars_regressors.parameters())),
-            lr=self.adversary_lr,
-            weight_decay=self.adversary_wd)
+            adv_params,
+            lr=self.adv_lr,
+            weight_decay=self.adv_wd)
+        scheduler_adversaries = StepLR(optimizer_adversaries, step_size=self.step_size_lr, gamma=0.9)
 
-        optimizer_dosers = torch.optim.Adam(
-            filter(lambda p: p.requires_grad, self.module.drug_network.dosers.parameters()),
-            lr=self.dosers_lr,
-            weight_decay=self.dosers_wd)
+        optimizers = [optimizer_autoencoder, optimizer_doser, optimizer_adversaries]
+        schedulers = [scheduler_autoencoder, scheduler_doser, scheduler_adversaries]
 
-        optimizers = [optimizer_autoencoder, optimizer_adversaries, optimizer_dosers]
         if self.step_size_lr is not None:
-            scheduler_autoencoder = StepLR(optimizer_autoencoder, step_size=self.step_size_lr)
-            scheduler_adversaries = StepLR(optimizer_adversaries, step_size=self.step_size_lr)
-            scheduler_dosers = StepLR(optimizer_dosers, step_size=self.step_size_lr)
-            schedulers = [scheduler_autoencoder, scheduler_adversaries, scheduler_dosers]
             return optimizers, schedulers
         else:
             return optimizers
 
     def training_step(self, batch, batch_idx):
-        opt, opt_adv, opt_dosers = self.optimizers()
+        opt, opt_doser, opt_adv = self.optimizers()
 
-        inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False)
+        mixup_alpha = self.alpha_mixup
 
-        if self.current_epoch >= self.n_epochs_warmup:
-            # Adversarial update
-            if self.iter_count % self.adversary_steps != 0:
-                opt_adv.zero_grad()
-                latent_basal = inf_outputs['latent_basal']
-                adv_results = self.module.adversarial_loss(tensors=batch, latent_basal=latent_basal)
-                self.manual_backward(adv_results['adv_loss'] + self.penalty_adversary * adv_results['penalty_adv'])
-                opt_adv.step()
+        batch, mixup_lambda = self.module.mixup_data(batch, alpha=mixup_alpha)
 
-                for key, val in adv_results.items():
-                    adv_results[key] = val.item()
+        inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False,
+                                                       inference_kwargs={
+                                                           'mixup_lambda': mixup_lambda,
+                                                       })
 
-                results = adv_results.copy()
-                results.update({'recon_loss': 0.0})
-                results.update({'cycle_loss': 0.0})
-
-            # Model update
-            else:
-                opt.zero_grad()
-                opt_dosers.zero_grad()
-                reconstruction_loss, kl_loss = self.module.loss(
-                    tensors=batch,
-                    inference_outputs=inf_outputs,
-                    generative_outputs=gen_outputs,
-                )
-                latent_basal = inf_outputs['latent_basal']
-                adv_results = self.module.adversarial_loss(tensors=batch, latent_basal=latent_basal)
-
-                reconstruction_loss = reconstruction_loss.mean()
-
-                loss = reconstruction_loss - self.reg_adversary * adv_results['adv_loss']
-
-                if self.variational:
-                    loss += self.kl_weight * kl_loss.mean()
-
-                if self.cycle_coeff > 0.0:
-                    cycle_loss = self.module.cycle_regularization(batch, inf_outputs, gen_outputs).mean()
-                    loss += self.cycle_coeff * cycle_loss
-
-                self.manual_backward(loss)
-                opt.step()
-                opt_dosers.step()
-
-                for key, val in adv_results.items():
-                    adv_results[key] = val.item()
-
-                results = adv_results.copy()
-
-                if self.cycle_coeff > 0.0:
-                    results.update({'cycle_loss': cycle_loss.item()})
-                else:
-                    results.update({'cycle_loss': 0.0})
-
-                results.update({'recon_loss': reconstruction_loss.item()})
-
-        else:
-            adv_results = {'adv_loss': 0.0, 'cycle_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0,
-                           'penalty_drugs': 0.0}
-            for covar in self.covars_encoder.keys():
-                adv_results[f'adv_{covar}'] = 0.0
-                adv_results[f'penalty_{covar}'] = 0.0
-
-            results = adv_results.copy()
-
-            opt.zero_grad()
-            opt_dosers.zero_grad()
-            reconstruction_loss, kl_loss = self.module.loss(
-                tensors=batch,
-                inference_outputs=inf_outputs,
-                generative_outputs=gen_outputs,
-            )
-            loss = reconstruction_loss
-            if self.variational:
-                loss += self.kl_weight * kl_loss.mean()
-            self.manual_backward(loss)
-            opt.step()
-            opt_dosers.step()
-
-            results.update({'recon_loss': reconstruction_loss.item()})
-
-        self.iter_count += 1
-
-        results.update({'reg_mean': 0.0, 'reg_var': 0.0})
-        results.update({'disent_basal': 0.0})
-        results.update({'disent_after': 0.0})
-
-        return results
-
-    def training_epoch_end(self, outputs):
-        keys = ['recon_loss', 'cycle_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean',
-                'reg_var', 'disent_basal', 'disent_after']
-        for key in keys:
-            self.epoch_history[key].append(np.mean([output[key] for output in outputs]))
-
-        for covar in self.covars_encoder.keys():
-            key1, key2 = f'adv_{covar}', f'penalty_{covar}'
-            self.epoch_history[key1].append(np.mean([output[key1] for output in outputs]))
-            self.epoch_history[key2].append(np.mean([output[key2] for output in outputs]))
-
-        self.epoch_history['epoch'].append(self.current_epoch)
-        self.epoch_history['mode'].append('train')
-
-        self.log("recon", self.epoch_history['recon_loss'][-1], prog_bar=True)
-        self.log("cycle_recon", self.epoch_history['cycle_loss'][-1], prog_bar=True)
-        # self.log("adv_loss", self.epoch_history['adv_loss'][-1], prog_bar=True)
-        # self.log("penalty_adv", self.epoch_history['penalty_adv'][-1], prog_bar=True)
-        # self.log("reg_mean", self.epoch_history['reg_mean'][-1], prog_bar=True)
-        # self.log("reg_var", self.epoch_history['reg_var'][-1], prog_bar=True)
-        # self.log("disent_drugs", self.epoch_history['disent_drugs'][-1], prog_bar=True)
-
-        if self.current_epoch > 1 and self.current_epoch % self.step_size_lr == 0:
-            sch, sch_adv, sch_dosers = self.lr_schedulers()
-            sch.step()
-            sch_adv.step()
-            sch_dosers.step()
-
-    def get_progress_bar_dict(self):
-        items = super().get_progress_bar_dict()
-        items.pop('v_num')
-        return items
-
-    def validation_step(self, batch, batch_idx):
-        inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False)
-
-        reconstruction_loss, kl_loss = self.module.loss(
+        recon_loss, kl_loss = self.module.loss(
             tensors=batch,
             inference_outputs=inf_outputs,
             generative_outputs=gen_outputs,
         )
 
-        adv_results = {'adv_loss': 0.0, 'cycle_loss': 0.0, 'adv_drugs': 0.0, 'penalty_adv': 0.0, 'penalty_drugs': 0.0}
+        if self.do_start_adv_training:
+            if self.adv_steps is None:
+                opt.zero_grad()
+                opt_doser.zero_grad()
+
+                z_basal = inf_outputs['z_basal']
+
+                adv_results = self.adversarial_loss(tensors=batch,
+                                                    z_basal=z_basal,
+                                                    mixup_lambda=mixup_lambda,
+                                                    compute_penalty=False)
+
+                loss = recon_loss + self.kl_weight * kl_loss - self.adv_lambda * adv_results['adv_loss']
+
+                self.manual_backward(loss)
+
+                if self.do_clip_grad:
+                    self.clip_gradients(opt,
+                                        gradient_clip_val=self.gradient_clip_value,
+                                        gradient_clip_algorithm="norm")
+                    self.clip_gradients(opt_doser,
+                                        gradient_clip_val=self.gradient_clip_value,
+                                        gradient_clip_algorithm="norm")
+                opt.step()
+                opt_doser.step()
+
+                opt_adv.zero_grad()
+
+                adv_results = self.adversarial_loss(tensors=batch,
+                                                    z_basal=z_basal.detach(),
+                                                    mixup_lambda=mixup_lambda,
+                                                    compute_penalty=True)
+
+                adv_loss = adv_results['adv_loss'] + self.pen_adv * adv_results['penalty_adv']
+
+                self.manual_backward(adv_loss)
+
+                if self.do_clip_grad:
+                    self.clip_gradients(opt_adv,
+                                        gradient_clip_val=self.gradient_clip_value,
+                                        gradient_clip_algorithm="norm")
+
+                opt_adv.step()
+
+            elif batch_idx % self.adv_steps == 0:
+                opt_adv.zero_grad()
+
+                z_basal = inf_outputs['z_basal']
+
+                adv_results = self.adversarial_loss(tensors=batch,
+                                                    z_basal=z_basal.detach(),
+                                                    mixup_lambda=mixup_lambda,
+                                                    compute_penalty=True)
+
+                adv_loss = adv_results['adv_loss'] + self.pen_adv * adv_results['penalty_adv']
+
+                self.manual_backward(adv_loss)
+
+                if self.do_clip_grad:
+                    self.clip_gradients(opt_adv,
+                                        gradient_clip_val=self.gradient_clip_value,
+                                        gradient_clip_algorithm="norm")
+
+                opt_adv.step()
+
+            # Model update
+            else:
+                opt.zero_grad()
+                opt_doser.zero_grad()
+
+                z_basal = inf_outputs['z_basal']
+
+                adv_results = self.adversarial_loss(tensors=batch,
+                                                    z_basal=z_basal,
+                                                    mixup_lambda=mixup_lambda,
+                                                    compute_penalty=False)
+
+                loss = recon_loss + self.kl_weight * kl_loss - self.adv_lambda * adv_results['adv_loss']
+
+                self.manual_backward(loss)
+
+                if self.do_clip_grad:
+                    self.clip_gradients(opt,
+                                        gradient_clip_val=self.gradient_clip_value,
+                                        gradient_clip_algorithm="norm")
+                    self.clip_gradients(opt_doser,
+                                        gradient_clip_val=self.gradient_clip_value,
+                                        gradient_clip_algorithm="norm")
+                opt.step()
+                opt_doser.step()
+
+        else:
+            opt.zero_grad()
+            opt_doser.zero_grad()
+
+            z_basal = inf_outputs['z_basal']
+
+            loss = recon_loss + self.kl_weight * kl_loss
+
+            self.manual_backward(loss)
+
+            if self.do_clip_grad:
+                self.clip_gradients(opt,
+                                    gradient_clip_val=self.gradient_clip_value,
+                                    gradient_clip_algorithm="norm")
+                self.clip_gradients(opt_doser,
+                                    gradient_clip_val=self.gradient_clip_value,
+                                    gradient_clip_algorithm="norm")
+
+            opt.step()
+            opt_doser.step()
+
+            opt_adv.zero_grad()
+
+            adv_results = self.adversarial_loss(tensors=batch,
+                                                z_basal=z_basal.detach(),
+                                                mixup_lambda=mixup_lambda,
+                                                compute_penalty=True)
+
+            adv_loss = adv_results['adv_loss'] + self.pen_adv * adv_results['penalty_adv']
+
+            self.manual_backward(adv_loss)
+
+            if self.do_clip_grad:
+                self.clip_gradients(opt_adv,
+                                    gradient_clip_val=self.gradient_clip_value,
+                                    gradient_clip_algorithm="norm")
+
+            opt_adv.step()
+
+        r2_mean, r2_var = self.module.r2_metric(batch, inf_outputs, gen_outputs, mode='direct')
+
+        for key, val in adv_results.items():
+            adv_results[key] = val.item()
+
+        results = adv_results.copy()
+        results.update({'recon_loss': recon_loss.item()})
+        results.update({'KL': kl_loss.item()})
+
+        results.update({'r2_mean': r2_mean, 'r2_var': r2_var})
+        results.update({'r2_mean_lfc': 0.0, 'r2_var_lfc': 0.0})
+        results.update({'cpa_metric': 0.0})
+        results.update({'disnt_basal': 0.0, 'disnt_after': 0.0})
+
+        return results
+
+    def training_epoch_end(self, outputs):
+        for key in self.metrics:
+            if key in ['disnt_basal', 'disnt_after']:
+                self.epoch_history[key].append(0.0)
+            else:
+                self.epoch_history[key].append(np.mean([output[key] for output in outputs if output[key] != 0.0]))
+
+        for covar, unique_covars in self.covars_encoder.items():
+            if len(unique_covars) > 1:
+                key1, key2, key3 = f'adv_{covar}', f'penalty_{covar}', f'acc_{covar}'
+                self.epoch_history[key1].append(np.mean([output[key1] for output in outputs if output[key1] != 0.0]))
+                self.epoch_history[key2].append(np.mean([output[key2] for output in outputs if output[key2] != 0.0]))
+                self.epoch_history[key3].append(np.mean([output[key3] for output in outputs if output[key3] != 0.0]))
+
+        self.epoch_history['epoch'].append(self.current_epoch)
+        self.epoch_history['mode'].append('train')
+
+        self.log("recon", self.epoch_history['recon_loss'][-1], prog_bar=True)
+        self.log("r2_mean", self.epoch_history['r2_mean'][-1], prog_bar=True)
+        self.log("adv_loss", self.epoch_history['adv_loss'][-1], prog_bar=True)
+        self.log("acc_pert", self.epoch_history['acc_perts'][-1], prog_bar=True)
+        for covar, nc in self.covars_encoder.items():
+            if len(nc) > 1:
+                self.log(f'acc_{covar}', self.epoch_history[f'acc_{covar}'][-1], prog_bar=True)
+
+        if self.current_epoch > 1 and self.current_epoch % self.step_size_lr == 0:
+            sch, sch_doser, sch_adv = self.lr_schedulers()
+            sch.step()
+            sch_doser.step()
+            sch_adv.step()
+
+    def validation_step(self, batch, batch_idx):
+        batch, mixup_lambda = self.module.mixup_data(batch, alpha=0.0)  # No mixup during validation
+
+        inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False,
+                                                       inference_kwargs={
+                                                           'mixup_lambda': 1.0,
+                                                       })
+
+        recon_loss, kl_loss = self.module.loss(
+            tensors=batch,
+            inference_outputs=inf_outputs,
+            generative_outputs=gen_outputs,
+        )
+
+        adv_results = {'adv_loss': 0.0, 'cycle_loss': 0.0, 'penalty_adv': 0.0,
+                       'adv_perts': 0.0, 'acc_perts': 0.0, 'penalty_perts': 0.0}
         for covar in self.covars_encoder.keys():
             adv_results[f'adv_{covar}'] = 0.0
+            adv_results[f'acc_{covar}'] = 0.0
             adv_results[f'penalty_{covar}'] = 0.0
 
-        r2_mean, r2_var = self.module.r2_metric(batch, inf_outputs, gen_outputs, method=self.r2_method)
-        disent_basal, disent_after = self.module.disentanglement(batch, inf_outputs, gen_outputs)
+        r2_mean, r2_var = self.module.r2_metric(batch, inf_outputs, gen_outputs, mode='direct')
+        disnt_basal, disnt_after = self.module.disentanglement(batch, inf_outputs, gen_outputs)
 
         results = adv_results
-        results.update({'reg_mean': r2_mean, 'reg_var': r2_var})
-        results.update({'disent_basal': disent_basal})
-        results.update({'disent_after': disent_after})
-        results.update({'recon_loss': reconstruction_loss.item()})
-        results.update({'cpa_metric': r2_mean + 0.35 * r2_var + 1.0 + len(
-            [covar for covar, unique_covars in self.covars_encoder.items() if
-             len(unique_covars) > 1]) - disent_basal + disent_after})
+        results.update({'r2_mean': r2_mean, 'r2_var': r2_var})
+        results.update({'disnt_basal': disnt_basal})
+        results.update({'disnt_after': disnt_after})
+        results.update({'KL': kl_loss.item()})
+        results.update({'recon_loss': recon_loss.item()})
+        results.update({'cpa_metric': r2_mean + 0.5 * r2_var + math.e ** (disnt_after - disnt_basal)})
 
         return results
 
     def validation_epoch_end(self, outputs):
-        keys = ['recon_loss', 'cycle_loss', 'adv_loss', 'penalty_adv', 'adv_drugs', 'penalty_drugs', 'reg_mean',
-                'reg_var', 'disent_basal', 'disent_after']
-        for key in keys:
-            self.epoch_history[key].append(np.mean([output[key] for output in outputs]))
+        for key in self.metrics:
+            self.epoch_history[key].append(np.mean([output[key] for output in outputs if output[key] != 0.0]))
 
-        for covar in self.covars_encoder.keys():
-            key1, key2 = f'adv_{covar}', f'penalty_{covar}'
-            self.epoch_history[key1].append(np.mean([output[key1] for output in outputs]))
-            self.epoch_history[key2].append(np.mean([output[key2] for output in outputs]))
+        for covar, unique_covars in self.covars_encoder.items():
+            if len(unique_covars) > 1:
+                key1, key2, key3 = f'adv_{covar}', f'penalty_{covar}', f'acc_{covar}'
+                self.epoch_history[key1].append(np.mean([output[key1] for output in outputs if output[key1] != 0.0]))
+                self.epoch_history[key2].append(np.mean([output[key2] for output in outputs if output[key2] != 0.0]))
+                self.epoch_history[key3].append(np.mean([output[key3] for output in outputs if output[key3] != 0.0]))
 
         self.epoch_history['epoch'].append(self.current_epoch)
         self.epoch_history['mode'].append('valid')
 
         self.log('val_recon', self.epoch_history['recon_loss'][-1], prog_bar=True)
         self.log('cpa_metric', np.mean([output['cpa_metric'] for output in outputs]), prog_bar=False)
-        self.log('val_disnt_basal', self.epoch_history['disent_basal'][-1], prog_bar=True)
-        self.log('val_disnt_after', self.epoch_history['disent_after'][-1], prog_bar=True)
-        self.log('val_reg_mean', self.epoch_history['reg_mean'][-1], prog_bar=True)
-        self.log('val_reg_var', self.epoch_history['reg_var'][-1], prog_bar=True)
+        self.log('disnt_basal', self.epoch_history['disnt_basal'][-1], prog_bar=True)
+        self.log('disnt_after', self.epoch_history['disnt_after'][-1], prog_bar=True)
+        self.log('val_r2_mean', self.epoch_history['r2_mean'][-1], prog_bar=True)
+        self.log('val_r2_var', self.epoch_history['r2_var'][-1], prog_bar=False)
+        self.log('val_KL', self.epoch_history['KL'][-1], prog_bar=True)
+
+        if self.current_epoch % self.n_epochs_verbose == self.n_epochs_verbose - 1:
+            print(f'\ndisnt_basal = {self.epoch_history["disnt_basal"][-1]}')
+            print(f'disnt_after = {self.epoch_history["disnt_after"][-1]}')
+            print(f'val_r2_mean = {self.epoch_history["r2_mean"][-1]}')
+            print(f'val_r2_var = {self.epoch_history["r2_var"][-1]}')
+

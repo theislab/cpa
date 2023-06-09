@@ -14,7 +14,6 @@ from scvi.data.fields import (
     LayerField,
     CategoricalObsField,
     NumericalObsField,
-    NumericalJointObsField,
     ObsmField,
 )
 
@@ -45,7 +44,7 @@ class CPA(BaseModelClass):
         n_latent: int
             Number of latent dimensions used for drug and Autoencoder
 
-        loss_ae: str
+        recon_loss: str
             Either `gauss` or `NB`. Autoencoder loss function.
 
         doser_type: str
@@ -66,8 +65,7 @@ class CPA(BaseModelClass):
         >>> import scanpy as sc
         >>> adata = sc.read('dataset.h5ad')
         >>> adata = cpa.CPA.setup_anndata(adata,
-                                          drug_key='condition',
-                                          dose_key='dose_val',
+                                          perturbation_keys={'perturbation': 'condition',  'dosage': 'dose_val'},
                                           categorical_covariate_keys=['cell_type'],
                                           control_key='control'
                                           )
@@ -79,50 +77,43 @@ class CPA(BaseModelClass):
                             split_key='split',
                             )
     """
-    cat_covars_encoders: dict = None
-    drug_encoder: dict = None
-    cont_covars: list = None
+    covars_encoder: dict = None
+    pert_encoder: dict = None
 
     def __init__(
             self,
             adata: AnnData,
-            n_latent: int = 128,
-            loss_ae: str = 'gauss',
-            doser_type: str = 'logsigm',
             split_key: str = None,
-            train_split: str = 'train',
-            valid_split: str = 'test',
-            test_split: str = 'ood',
+            train_split: Union[str, List[str]] = 'train',
+            valid_split: Union[str, List[str]] = 'test',
+            test_split: Union[str, List[str]] = 'ood',
             **hyper_params,
     ):
         super().__init__(adata)
-        self.drug_encoder = CPA.drug_encoder
-        self.cat_covars_encoders = CPA.cat_covars_encoders
 
-        self.n_genes = adata.n_vars
-        self.n_drugs = len(self.drug_encoder)
         self.split_key = split_key
 
-        self.drugs = list(self.drug_encoder.keys())
+        self.drugs = list(self.pert_encoder.keys())
         self.covars = {
-            covar: list(self.cat_covars_encoders[covar].keys()) for covar in self.cat_covars_encoders.keys()
+            covar: list(self.covars_encoder[covar].keys()) for covar in self.covars_encoder.keys()
         }
 
         self.module = CPAModule(
-            n_genes=self.n_genes,
-            n_drugs=self.n_drugs,
-            cat_covars_encoder=self.cat_covars_encoders,
-            n_latent=n_latent,
-            loss_ae=loss_ae,
-            doser_type=doser_type,
+            n_genes=adata.n_vars,
+            n_perts=len(self.pert_encoder),
+            covars_encoder=self.covars_encoder,
             **hyper_params,
         ).float()
 
         train_indices, valid_indices, test_indices = None, None, None
         if split_key is not None:
-            train_indices = np.where(adata.obs.loc[:, split_key] == train_split)[0]
-            valid_indices = np.where(adata.obs.loc[:, split_key] == valid_split)[0]
-            test_indices = np.where(adata.obs.loc[:, split_key] == test_split)[0]
+            train_split = train_split if isinstance(train_split, list) else [train_split]
+            valid_split = valid_split if isinstance(valid_split, list) else [valid_split]
+            test_split = test_split if isinstance(test_split, list) else [test_split]
+
+            train_indices = np.where(adata.obs.loc[:, split_key].isin(train_split))[0]
+            valid_indices = np.where(adata.obs.loc[:, split_key].isin(valid_split))[0]
+            test_indices = np.where(adata.obs.loc[:, split_key].isin(test_split))[0]
 
         self.train_indices = train_indices
         self.valid_indices = valid_indices
@@ -139,12 +130,17 @@ class CPA(BaseModelClass):
     def setup_anndata(
             cls,
             adata: AnnData,
-            perturbation_keys: Dict[str, str],
-            use_counts: Optional[bool] = False,
-            categorical_covariate_keys: Optional[List[str]] = [],
-            continuous_covariate_keys: Optional[List[str]] = [],
-            control_key: Optional[str] = None,
+            perturbation_key: str,
+            control_group: str,
+            dosage_key: str,
+            batch_key: Optional[str] = None,
+            layer: Optional[str] = None,
+            is_count_data: Optional[bool] = False,
+            categorical_covariate_keys: Optional[List[str]] = None,
             deg_uns_key: Optional[str] = None,
+            deg_uns_cat_key: Optional[str] = None,
+            verbose: bool = False,
+            max_comb_len: int = 2,
             **kwargs,
     ):
         """
@@ -159,57 +155,107 @@ class CPA(BaseModelClass):
         continuous_covariate_keys
 
         """
-        CPA_REGISTRY_KEYS.PERTURBATION_KEYS = perturbation_keys
+        CPA_REGISTRY_KEYS.PERTURBATION_KEY = perturbation_key
+        CPA_REGISTRY_KEYS.DOSAGE_KEY = dosage_key
         CPA_REGISTRY_KEYS.CAT_COV_KEYS = categorical_covariate_keys
-        CPA_REGISTRY_KEYS.CONT_COV_KEYS = continuous_covariate_keys
+        CPA_REGISTRY_KEYS.MAX_COMB_LENGTH = max_comb_len
+        CPA_REGISTRY_KEYS.BATCH_KEY = batch_key
 
-        drug_key = perturbation_keys['perturbation']
-        dose_key = perturbation_keys['dosage']
+        perturbations = adata.obs[perturbation_key].astype(str).values
+        dosages = adata.obs[dosage_key].astype(str).values
 
-        drugs = adata.obs[drug_key]
-        dosages = adata.obs[dose_key].astype(str)
+        category_key = f'{cls.__name__}_cat'
+        keys = categorical_covariate_keys + [perturbation_key]
 
-        # get unique drugs
-        drugs_names_unique = set()
-        for d in np.unique(drugs):
-            [drugs_names_unique.add(i) for i in d.split("+")]
-        drugs_names_unique = sorted(list(np.array(list(drugs_names_unique))))
+        adata.obs[category_key] = adata.obs[keys].apply(lambda x: '_'.join(x), axis=1)
+        CPA_REGISTRY_KEYS.CATEGORY_KEY = category_key
 
-        drugs_obsm = np.zeros((adata.n_obs, len(drugs_names_unique)))
-        for i in tqdm(range(adata.n_obs)):
-            cell_drugs = np.isin(drugs_names_unique, drugs[i].split('+'))
-            cell_doses = np.array(dosages[i].split("+")).astype(np.float32)
-            drugs_obsm[i, cell_drugs] = cell_doses
+        if cls.pert_encoder is None:
+            # get unique drugs
+            perts_names_unique = set()
+            for d in np.unique(perturbations):
+                [perts_names_unique.add(i) for i in d.split("+") if i != control_group]
+            perts_names_unique = ['<PAD>', control_group] + sorted(list(perts_names_unique))
+            CPA_REGISTRY_KEYS.PADDING_IDX = 0
 
-        adata.obsm['drugs_doses'] = np.array(drugs_obsm)
+            pert_encoder = {pert: i for i, pert in
+                            enumerate(perts_names_unique)}
 
-        drug_encoder = {drug: i for i, drug in
-                        enumerate(drugs_names_unique)}
+        else:
+            pert_encoder = cls.pert_encoder
+            perts_names_unique = list(pert_encoder.keys())
+
+        pert_map = {}
+        for condition in tqdm(perts_names_unique):
+            perts_list = np.where(np.isin(perts_names_unique, condition.split('+')))[0]
+            pert_map[condition] = list(perts_list) + [CPA_REGISTRY_KEYS.PADDING_IDX for _ in
+                                                      range(max_comb_len - len(perts_list))]
+
+        dose_map = {}
+        for dosage_str in tqdm(dosages):
+            dosages_list = [float(i) for i in dosage_str.split('+')]
+            dose_map[dosage_str] = list(dosages_list) + [0.0 for _ in range(max_comb_len - len(dosages_list))]
+
+        data_perts = np.vstack(np.vectorize(lambda x: pert_map[x], otypes=[np.ndarray])(perturbations)).astype(int)
+        adata.obsm[CPA_REGISTRY_KEYS.PERTURBATIONS] = data_perts
+
+        data_perts_dosages = np.vstack(np.vectorize(lambda x: dose_map[x], otypes=[np.ndarray])(dosages)).astype(float)
+        adata.obsm[CPA_REGISTRY_KEYS.PERTURBATIONS_DOSAGES] = data_perts_dosages
+
+        # setup control column
+        control_key = f"{cls.__name__}_{control_group}"
+        CPA_REGISTRY_KEYS.CONTROL_KEY = control_key
+        adata.obs[control_key] = (adata.obs[perturbation_key] == control_group).astype(int)
 
         setup_method_args = cls._get_setup_method_args(**locals())
         anndata_fields = \
             [
-                LayerField(registry_key=CPA_REGISTRY_KEYS.X_KEY, layer='counts' if use_counts else None,
-                           is_count_data=True if use_counts else False),
-                ObsmField('drugs_doses', 'drugs_doses', is_count_data=False, correct_data_format=True)
+                LayerField(registry_key=CPA_REGISTRY_KEYS.X_KEY,
+                           layer=layer,
+                           is_count_data=is_count_data),
+                ObsmField(CPA_REGISTRY_KEYS.PERTURBATIONS, CPA_REGISTRY_KEYS.PERTURBATIONS,
+                          is_count_data=True, correct_data_format=True),
+                ObsmField(CPA_REGISTRY_KEYS.PERTURBATIONS_DOSAGES, CPA_REGISTRY_KEYS.PERTURBATIONS_DOSAGES,
+                          is_count_data=False, correct_data_format=True),
+                CategoricalObsField(registry_key=CPA_REGISTRY_KEYS.PERTURBATION_KEY, attr_key=perturbation_key),
             ] + \
-            [CategoricalObsField(registry_key=covar, obs_key=covar) for covar in categorical_covariate_keys] + \
-            [NumericalObsField(registry_key=covar, obs_key=covar) for covar in continuous_covariate_keys]
+            [CategoricalObsField(registry_key=covar, attr_key=covar) for covar in categorical_covariate_keys]
 
-        if control_key:
-            anndata_fields.append(NumericalObsField(registry_key='control', obs_key=control_key))
+        anndata_fields.append(NumericalObsField(registry_key=control_key, attr_key=control_key))
+        anndata_fields.append(CategoricalObsField(registry_key=category_key, attr_key=category_key))
 
         if deg_uns_key:
-            mask = np.zeros((adata.n_obs, adata.n_vars))
-            for i, cov_drug in tqdm(enumerate(adata.obs['cov_drug'].values)):
-                if cov_drug in adata.uns[deg_uns_key].keys():
-                    mask[i] = adata.var.index.isin(adata.uns[deg_uns_key][cov_drug]).astype(np.int)
+            n_deg_r2 = kwargs.pop('n_deg_r2', 10)
+
+            cov_cond_unique = np.unique(adata.obs[deg_uns_cat_key].astype(str).values)
+
+            cov_cond_map = {}
+            cov_cond_map_r2 = {}
+            for cov_cond in tqdm(cov_cond_unique):
+                if cov_cond in adata.uns[deg_uns_key].keys():
+                    mask_hvg = adata.var_names.isin(adata.uns[deg_uns_key][cov_cond]).astype(np.int)
+                    mask_hvg_r2 = adata.var_names.isin(adata.uns[deg_uns_key][cov_cond][:n_deg_r2]).astype(np.int)
+                    cov_cond_map[cov_cond] = list(mask_hvg)
+                    cov_cond_map_r2[cov_cond] = list(mask_hvg_r2)
                 else:
-                    mask[i] = 1
+                    no_mask = list(np.ones(shape=(adata.n_vars,)))
+                    cov_cond_map[cov_cond] = no_mask
+                    cov_cond_map_r2[cov_cond] = no_mask
 
-            adata.obsm['deg_mask'] = np.array(mask)
+            mask = np.vstack(np.vectorize(lambda x: cov_cond_map[x], otypes=[np.ndarray])(
+                adata.obs[deg_uns_cat_key].astype(str).values))
+            mask_r2 = np.vstack(np.vectorize(lambda x: cov_cond_map[x], otypes=[np.ndarray])(
+                adata.obs[deg_uns_cat_key].astype(str).values))
 
-            anndata_fields.append(ObsmField("deg_mask", "deg_mask", is_count_data=False, correct_data_format=True))
+            CPA_REGISTRY_KEYS.DEG_MASK = 'deg_mask'
+            CPA_REGISTRY_KEYS.DEG_MASK_R2 = 'deg_mask_r2'
+            adata.obsm[CPA_REGISTRY_KEYS.DEG_MASK] = np.array(mask)
+            adata.obsm[CPA_REGISTRY_KEYS.DEG_MASK_R2] = np.array(mask_r2)
+
+            anndata_fields.append(ObsmField(CPA_REGISTRY_KEYS.DEG_MASK, CPA_REGISTRY_KEYS.DEG_MASK,
+                                            is_count_data=True, correct_data_format=True))
+            anndata_fields.append(ObsmField(CPA_REGISTRY_KEYS.DEG_MASK_R2, CPA_REGISTRY_KEYS.DEG_MASK_R2,
+                                            is_count_data=True, correct_data_format=True))
 
         adata_manager = AnnDataManager(
             fields=anndata_fields, setup_method_args=setup_method_args
@@ -217,14 +263,16 @@ class CPA(BaseModelClass):
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)
 
-        cat_covar_encoders = {}
+        covars_encoder = {}
         for covar in categorical_covariate_keys:
-            cat_covar_encoders[covar] = {c: i for i, c in enumerate(
+            covars_encoder[covar] = {c: i for i, c in enumerate(
                 adata_manager.registry['field_registries'][covar]['state_registry']['categorical_mapping'])}
 
-        CPA.cat_covars_encoders = cat_covar_encoders
-        CPA.drug_encoder = drug_encoder
-        CPA.cont_covars = continuous_covariate_keys
+        if cls.covars_encoder is None:
+            cls.covars_encoder = covars_encoder
+
+        if cls.pert_encoder is None:
+            cls.pert_encoder = pert_encoder
 
     def train(
             self,
@@ -235,7 +283,6 @@ class CPA(BaseModelClass):
             batch_size: int = 128,
             early_stopping: bool = False,
             plan_kwargs: Optional[dict] = None,
-            hyperopt: bool = False,
             save_path: Optional[str] = None,
             **trainer_kwargs,
     ):
@@ -291,10 +338,22 @@ class CPA(BaseModelClass):
                 use_gpu=use_gpu,
             )
 
-        self.training_plan = CPATrainingPlan(self.module, self.cat_covars_encoders, **plan_kwargs)
+        perturbation_key = CPA_REGISTRY_KEYS.PERTURBATION_KEY
+        pert_adv_encoder = {c: i for i, c in enumerate(
+            self.adata_manager.registry['field_registries'][perturbation_key]['state_registry'][
+                'categorical_mapping'])}
+
+        drug_weights = []
+        n_adv_perts = len(self.adata.obs[perturbation_key].unique())
+        for condition in tqdm(list(pert_adv_encoder.keys())):
+            n_positive = len(self.adata[self.adata.obs[perturbation_key] == condition])
+            drug_weights.append((self.adata.n_obs / n_positive) - 1.0)
+
+        self.training_plan = CPATrainingPlan(self.module, self.covars_encoder,
+                                             n_adv_perts=n_adv_perts, **plan_kwargs,
+                                             drug_weights=drug_weights)
         trainer_kwargs["early_stopping"] = False
-        trainer_kwargs.update({'weights_summary': 'top'})
-        trainer_kwargs['check_val_every_n_epoch'] = trainer_kwargs.get('check_val_every_n_epoch', 20)
+        trainer_kwargs['check_val_every_n_epoch'] = trainer_kwargs.get('check_val_every_n_epoch', 10)
 
         es_callback = EarlyStopping(monitor='cpa_metric',
                                     patience=trainer_kwargs['early_stopping_patience'],
@@ -311,10 +370,10 @@ class CPA(BaseModelClass):
         if save_path is None:
             save_path = './'
 
-        checkpoint = SaveBestState(monitor='cpa_metric', mode='max', period=20, verbose=False)
+        checkpoint = SaveBestState(monitor='cpa_metric', mode='max', period=1, verbose=False)
         trainer_kwargs['callbacks'].append(checkpoint)
 
-        runner = TrainRunner(
+        self.runner = TrainRunner(
             self,
             training_plan=self.training_plan,
             data_splitter=data_splitter,
@@ -322,13 +381,12 @@ class CPA(BaseModelClass):
             use_gpu=use_gpu,
             early_stopping_monitor="cpa_metric",
             early_stopping_mode='max',
-            checkpoint_callback=True,
             **trainer_kwargs,
         )
-        runner()
+        self.runner()
 
         self.epoch_history = pd.DataFrame().from_dict(self.training_plan.epoch_history)
-        if save_path is not None:
+        if save_path is not False:
             self.save(save_path, overwrite=True)
 
     @torch.no_grad()
@@ -337,7 +395,7 @@ class CPA(BaseModelClass):
             adata: Optional[AnnData] = None,
             indices: Optional[Sequence[int]] = None,
             batch_size: Optional[int] = 32,
-    ) -> np.ndarray:
+    ):
         """Returns the basal latent variable
 
         Parameters
@@ -363,10 +421,11 @@ class CPA(BaseModelClass):
         latent_basal = []
         latent = []
         for tensors in scdl:
+            tensors, _ = self.module.mixup_data(tensors, alpha=0.0)
             inference_inputs = self.module._get_inference_input(tensors)
             outputs = self.module.inference(**inference_inputs)
-            latent_basal += [outputs["latent_basal"].cpu().numpy()]
-            latent += [outputs['latent'].cpu().numpy()]
+            latent_basal += [outputs["z_basal"].cpu().numpy()]
+            latent += [outputs['z'].cpu().numpy()]
 
         latent_basal_adata = AnnData(X=np.concatenate(latent_basal, axis=0), obs=adata.obs.copy())
         latent_basal_adata.obs_names = adata.obs_names
@@ -382,6 +441,8 @@ class CPA(BaseModelClass):
             adata: Optional[AnnData] = None,
             indices: Optional[Sequence[int]] = None,
             batch_size: Optional[int] = 32,
+            n_samples: int = 20,
+            return_mean: bool = True,
     ):
         """Counterfactual-friendly gene expression prediction
         # TODO: See if another signature makes more sense for better usability
@@ -393,33 +454,30 @@ class CPA(BaseModelClass):
         Tuple
             Gene expression means and standard variations
         """
-        assert self.module.loss_ae in ["gauss", 'mse']
+        assert self.module.recon_loss in ["gauss", 'nb', 'zinb']
         self.module.eval()
 
-        # adata = self.adata if adata is None else adata
         adata = self._validate_anndata(adata)
         if indices is None:
             indices = np.arange(adata.n_obs)
         scdl = self._make_data_loader(
             adata=adata, indices=indices, batch_size=batch_size, shuffle=False
         )
-        mus = []
-        stds = []
-        for tensors in scdl:
-            _mus, _stds = self.module.get_expression(tensors)
-            mus.append(_mus.detach().cpu().numpy())
-            stds.append(_stds.detach().cpu().numpy())
+        xs = []
+        for tensors in tqdm(scdl):
+            x_pred = self.module.get_expression(tensors, n_samples=n_samples).detach().cpu().numpy()
+            xs.append(x_pred)
 
-        pred_adata_mean = AnnData(X=np.concatenate(mus, axis=0), obs=adata.obs.copy())
-        pred_adata_var = AnnData(X=np.concatenate(stds, axis=0), obs=adata.obs.copy())
+        if n_samples > 1 and self.module.variational:
+            # The -2 axis correspond to cells.
+            x_pred = np.concatenate(xs, axis=1)
+        else:
+            x_pred = np.concatenate(xs, axis=0)
 
-        pred_adata_mean.obs_names = adata.obs_names
-        pred_adata_var.obs_names = adata.obs_names
+        if self.module.variational and n_samples > 1 and return_mean:
+            x_pred = x_pred.mean(0)
 
-        pred_adata_mean.var_names = adata.var_names
-        pred_adata_var.var_names = adata.var_names
-
-        return pred_adata_mean, pred_adata_var
+        adata.obsm[f'{self.__class__.__name__}_pred'] = x_pred
 
     @torch.no_grad()
     def get_drug_embeddings(self, doses=1.0, drug: Optional[str] = None):
@@ -438,14 +496,14 @@ class CPA(BaseModelClass):
             if drug is None:
                 treatments = doses * torch.eye(self.n_drugs, device=self.device)
             else:
-                treatments = doses * F.one_hot(torch.LongTensor([self.drug_encoder[drug]]).to(self.device),
+                treatments = doses * F.one_hot(torch.LongTensor([self.pert_encoder[drug]]).to(self.device),
                                                self.n_drugs)
         elif isinstance(doses, np.ndarray):
             treatments = torch.tensor(doses).to(self.device).float()
         else:
             treatments = doses
 
-        embeds = self.module.drug_network(treatments).detach().cpu().numpy()
+        embeds = self.module.pert_network(treatments).detach().cpu().numpy()
 
         return embeds
 
@@ -462,10 +520,10 @@ class CPA(BaseModelClass):
 
         """
         if covariate_value is None:
-            covar_ids = torch.arange(len(self.cat_covars_encoders[covariate]), device=self.device)
+            covar_ids = torch.arange(len(self.covars_encoder[covariate]), device=self.device)
         else:
-            covar_ids = torch.LongTensor([self.cat_covars_encoders[covariate][covariate_value]]).to(self.device)
-        embeddings = self.module.cat_covars_embeddings[covariate](covar_ids).detach().cpu().numpy()
+            covar_ids = torch.LongTensor([self.covars_encoder[covariate][covariate_value]]).to(self.device)
+        embeddings = self.module.covars_embeddings[covariate](covar_ids).detach().cpu().numpy()
 
         return embeddings
 
@@ -474,9 +532,9 @@ class CPA(BaseModelClass):
 
         # save public dictionaries
         total_dict = {
-            'drug_encoder': self.drug_encoder,
-            'cat_covars_encoder': self.cat_covars_encoders,
-            'cont_covars': self.cont_covars,
+            'pert_encoder': self.pert_encoder,
+            # 'pert_adv_encoder': self.pert_adv_encoder,
+            'covars_encoder': self.covars_encoder,
         }
 
         json_dict = json.dumps(total_dict)
@@ -501,31 +559,11 @@ class CPA(BaseModelClass):
         with open(os.path.join(dir_path, 'CPA_dicts.json')) as f:
             total_dict = json.load(f)
 
-            cls.drug_encoder = total_dict['drug_encoder']
-            cls.cat_covars_encoder = total_dict['cat_covars_encoder']
-            cls.cont_covars = total_dict['cont_covars']
+            cls.pert_encoder = total_dict['pert_encoder']
+            # cls.pert_adv_encoder = total_dict['pert_adv_encoder']
+            cls.covars_encoder = total_dict['covars_encoder']
 
         model = super().load(dir_path, adata, use_gpu)
-
-        drug_key = perturbation_keys['perturbation']
-        dosage_key = perturbation_keys['dosage']
-
-        if adata is not None and 'drugs_doses' not in adata.obsm:
-            drugs_obsm = np.zeros((adata.n_obs, len(CPA.drug_encoder)))
-            drugs, dosages = adata.obs[drug_key], adata.obs[dosage_key].astype(str)
-            for i in tqdm(range(adata.n_obs)):
-                cell_drugs = np.isin(list(CPA.drug_encoder.keys()), drugs[i].split('+'))
-                cell_doses = np.array(dosages[i].split("+")).astype(np.float32)
-                drugs_obsm[i, cell_drugs] = cell_doses
-
-            adata.obsm['drugs_doses'] = drugs_obsm
-
-            if deg_uns_key:
-                mask = np.zeros((adata.n_obs, adata.n_vars))
-                for i, cov_drug in tqdm(enumerate(adata.obs['cov_drug'].values)):
-                    mask[i] = adata.var.index.isin(adata.uns[deg_uns_key][cov_drug]).astype(np.int)
-
-                adata.obsm['deg_mask'] = np.array(mask)
 
         try:
             model.epoch_history = pd.read_csv(os.path.join(dir_path, 'history.csv'))

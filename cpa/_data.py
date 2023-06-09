@@ -24,9 +24,13 @@ class AnnDataSplitter(DataSplitter):
         self.test_idx = test_indices
 
     def setup(self, stage: Optional[str] = None):
-        gpus, self.device = parse_use_gpu_arg(self.use_gpu, return_device=True)
+        accelerator, _, self.device = parse_use_gpu_arg(
+            self.use_gpu, return_device=True
+        )
         self.pin_memory = (
-            True if (settings.dl_pin_memory_gpu_training and gpus != 0) else False
+            True
+            if (settings.dl_pin_memory_gpu_training and accelerator == "gpu")
+            else False
         )
 
     def train_dataloader(self):
