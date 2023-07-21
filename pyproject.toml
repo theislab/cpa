@@ -34,6 +34,7 @@ anndata = ">=0.7.5"
 black = { version = ">=20.8b1", optional = true }
 codecov = { version = ">=2.0.8", optional = true }
 flake8 = { version = ">=3.7.7", optional = true }
+igraph = { version = "*", optional = true }
 importlib-metadata = { version = "^1.0", python = "<3.8" }
 ipython = { version = ">=7.1.1", optional = true }
 isort = { version = ">=5.7", optional = true }
@@ -48,7 +49,6 @@ pre-commit = { version = ">=2.7.1", optional = true }
 pydata-sphinx-theme = { version = ">=0.4.0", optional = true }
 pytest = { version = ">=4.4", optional = true }
 python = ">=3.7.2,<3.11"
-python-igraph = { version = "*", optional = true }
 scanpydoc = { version = ">=0.5", optional = true }
 scikit-misc = { version = ">=0.1.3", optional = true }
 scvi-tools = ">=0.16.4"
@@ -82,7 +82,7 @@ docs = [
     "sphinx_gallery",
     "sphinx-rtd-theme",
 ]
-tutorials = ["scanpy", "leidenalg", "python-igraph", "loompy", "scikit-misc", "scipy==1.8.0"]
+tutorials = ["scanpy", "leidenalg", "igraph", "loompy", "scikit-misc", "scipy==1.8.0"]
 
 [tool.poetry.dev-dependencies]
 
