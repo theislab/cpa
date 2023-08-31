@@ -76,13 +76,14 @@ docs = [
     "nbsphinx",
     "nbsphinx-link",
     "ipython",
+    "toml",
     "pydata-sphinx-theme",
     "typing_extensions",
     "sphinx-autodoc-typehints",
     "sphinx_gallery",
     "sphinx-rtd-theme",
 ]
-tutorials = ["scanpy", "leidenalg", "python-igraph", "loompy", "scikit-misc", "scipy"]
+tutorials = ["scanpy", "leidenalg", "python-igraph", "loompy", "scikit-misc", "scipy", "toml"]
 
 [tool.poetry.dev-dependencies]
 
