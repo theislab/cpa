@@ -95,6 +95,12 @@ author = u"Mohsen Naghipourfar"
 # for |version| and |release|, also used in various other places throughout
 # the built documents.
 #
+import toml
+
+pyproject = toml.load("../pyproject.toml")
+version = pyproject['tool']['poetry']['version']
+release = version
+
 # The short X.Y version.
 version = cpa.__version__
 # The full version, including alpha/beta/rc tags.
