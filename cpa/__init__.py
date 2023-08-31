@@ -12,8 +12,8 @@ try:
 except:
     import importlib_metadata
 
-package_name = "cpa-tools"
-__version__ = importlib_metadata.version(package_name)
+# package_name = "cpa-tools"
+# __version__ = importlib_metadata.version(package_name)
 
 # __all__ = [
 #     "CPA",

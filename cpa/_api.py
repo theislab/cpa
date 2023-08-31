@@ -20,26 +20,39 @@ class ComPertAPI:
     API for CPA model to make it compatible with scanpy.
     """
 
-    def __init__(self, adata: AnnData, model: CPA,
+    def __init__(self, 
+                 adata: AnnData, 
+                 model: CPA,
                  de_genes_uns_key: str = 'rank_genes_groups_cov',
                  pert_category_key: str = 'cov_drug_dose_name',
-                 control_key: str = 'control'):
+                 control_group: str = 'ctrl', 
+                 experiment: str = 'drug'):
         """
         Parameters
         ----------
-        adata : ComPertDataset
-            Full dataset.
-        model : ComPertModel
-            Pre-trained ComPert model.
+        adata : AnnData
+            Annotated data matrix.
+        model : CPA
+            Pre-trained CPA model.
+        de_genes_uns_key : str, optional
+            Key for the DE genes in `adata.uns`, by default 'rank_genes_groups_cov'
+        pert_category_key : str, optional
+            Key for the perturbation category in `adata.obs`, by default 'cov_drug_dose_name'
+        control_group : str, optional
+            Name of the control group, by default 'ctrl'
         """
-        self.perturbation_key = CPA_REGISTRY_KEYS.PERTURBATION_KEYS['perturbation']
-        self.dose_key = CPA_REGISTRY_KEYS.PERTURBATION_KEYS['dosage']
+        self.perturbation_key = CPA_REGISTRY_KEYS.PERTURBATION_KEY
+        self.dose_key = CPA_REGISTRY_KEYS.PERTURBATION_DOSAGE_KEY
         self.covars_key = CPA_REGISTRY_KEYS.CAT_COV_KEYS
-        self.control_key = control_key
+
+        adata.obs['control'] = (adata.obs[self.perturbation_key] == control_group).astype(int).values
+        self.control_group = control_group
+        self.control_key = 'control'
 
         self.model = model
         self.adata = adata
         self.var_names = adata.var_names
+        self.experiment = experiment.lower()
 
         if de_genes_uns_key in adata.uns.keys():
             self.de_genes = adata.uns[de_genes_uns_key]
@@ -49,14 +62,14 @@ class ComPertAPI:
         self.split_key = model.split_key
         data_types = list(np.unique(adata.obs[self.split_key])) + ['all']
 
-        self.unique_perts = list(model.drug_encoder.keys())
+        self.unique_perts = list(model.pert_encoder.keys())
         self.unique_covars = {}
         for covar in model.covars_encoder.keys():
             self.unique_covars[covar] = list(model.covars_encoder[covar].keys())
 
-        self.num_drugs = len(model.drug_encoder)
+        self.num_drugs = len(model.pert_encoder)
 
-        self.perts_dict = model.drug_encoder.copy()
+        self.perts_dict = model.pert_encoder.copy()
         self.covars_dict = model.covars_encoder.copy()
 
         self.emb_covars = None
@@ -81,34 +94,39 @@ class ComPertAPI:
         for k in data_types:
             self.measured_points[k] = {}
             self.num_measured_points[k] = {}
-            for pert in self.seen_covars_perts[k]:
-                num_points = len(np.where(self.adatas[k].obs[self.pert_categories_key] == pert)[0])
-                self.num_measured_points[k][pert] = num_points
+            for covar_cat in self.seen_covars_perts[k]:
+                num_points = len(np.where(self.adatas[k].obs[self.pert_categories_key] == covar_cat)[0])
+                self.num_measured_points[k][covar_cat] = num_points
 
-                cov, drug, dose = pert.split('_')
+                if self.experiment == 'drug':
+                    cov, pert, dose = covar_cat.split('_')
+                else:
+                    cov, pert = covar_cat.split('_')
+                    dose = '+'.join(['1.0' for _ in pert.split('+')])
+
                 if not ('+' in dose):
                     dose = float(dose)
                 if cov in self.measured_points[k].keys():
-                    if drug in self.measured_points[k][cov].keys():
-                        self.measured_points[k][cov][drug].append(dose)
+                    if pert in self.measured_points[k][cov].keys():
+                        self.measured_points[k][cov][pert].append(dose)
                     else:
-                        self.measured_points[k][cov][drug] = [dose]
+                        self.measured_points[k][cov][pert] = [dose]
                 else:
-                    self.measured_points[k][cov] = {drug: [dose]}
+                    self.measured_points[k][cov] = {pert: [dose]}
 
         self.measured_points['all'] = copy.deepcopy(self.measured_points['train'])
         for cov in self.measured_points['ood'].keys():
-            for pert in self.measured_points['ood'][cov].keys():
-                if pert in self.measured_points['train'][cov].keys():
-                    self.measured_points['all'][cov][pert] = \
-                        self.measured_points['train'][cov][pert].copy() + \
-                        self.measured_points['ood'][cov][pert].copy()
+            for covar_cat in self.measured_points['ood'][cov].keys():
+                if covar_cat in self.measured_points['train'][cov].keys():
+                    self.measured_points['all'][cov][covar_cat] = \
+                        self.measured_points['train'][cov][covar_cat].copy() + \
+                        self.measured_points['ood'][cov][covar_cat].copy()
                 else:
-                    self.measured_points['all'][cov][pert] = \
-                        self.measured_points['ood'][cov][pert].copy()
+                    self.measured_points['all'][cov][covar_cat] = \
+                        self.measured_points['ood'][cov][covar_cat].copy()
 
     @torch.no_grad()
-    def get_drug_embeddings(self, dose=1.0):
+    def get_pert_embeddings(self, dose=1.0):
         """
         Parameters
         ----------
@@ -120,7 +138,7 @@ class ComPertAPI:
         If return_anndata is True, returns anndata object. Otherwise, doesn't
         return anything. Always saves embeddding in self.emb_perts.
         """
-        embeddings = self.model.get_drug_embeddings(dose)
+        embeddings = self.model.get_pert_embeddings(dose)
         return AnnData(X=embeddings, obs={self.perturbation_key: self.unique_perts})
 
     def get_covars_embeddings(self, covariate: str):
@@ -203,7 +221,7 @@ class ComPertAPI:
         for i, drug_combo in enumerate(drugs_list):
             drug_mix[i] = self.get_drug_encoding_(drug_combo, doses=doses_list[i])
 
-        emb = self.model.get_drug_embeddings(torch.Tensor(drug_mix).to(
+        emb = self.model.get_pert_embeddings(torch.Tensor(drug_mix).to(
             self.model.device)).cpu().clone().detach().numpy()
 
         adata = sc.AnnData(emb)
@@ -337,10 +355,10 @@ class ComPertAPI:
 
                 if len(pert_loop.split('+')) > 1: # combination of drugs
                     drugs_doses = self.get_drug_encoding_(pert_loop, dose_loop)
-                    emb_perts = self.model.get_drug_embeddings(drugs_doses)
+                    emb_perts = self.model.get_pert_embeddings(drugs_doses)
                     emb_covs = emb_perts
                 else:
-                    emb_perts = self.get_drug_embeddings(dose=float(dose_loop))
+                    emb_perts = self.get_pert_embeddings(dose=float(dose_loop))
                     emb_covs = emb_perts.X[emb_perts.obs.condition == pert_loop]
 
                 for cov_value in covs_loop:
@@ -398,9 +416,9 @@ class ComPertAPI:
 
         if len(str(dose).split('+')) > 1:
             drug_encoded = self.get_drug_encoding_(pert, dose)
-            drug_emb = self.model.get_drug_embeddings(drug_encoded)
+            drug_emb = self.model.get_pert_embeddings(drug_encoded)
         else:
-            drug_emb = self.model.get_drug_embeddings(doses=float(dose), drug=pert)
+            drug_emb = self.model.get_pert_embeddings(dosage=float(dose), pert=pert)
 
         cond_emb = drug_emb
         for cov in covs:

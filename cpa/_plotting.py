@@ -17,6 +17,8 @@ from sklearn.metrics import r2_score
 from . import CPA
 from ._api import ComPertAPI
 
+from typing import Optional
+
 FONT_SIZE = 13
 font = {'size': FONT_SIZE, 'family': 'monospace'}
 
@@ -1077,9 +1079,7 @@ def plot_similarity(
 
 def mean_plot(
         adata,
-        pred,
-        condition_key,
-        exp_key,
+        pred_obsm_key,
         path_to_save="./reg_mean.pdf",
         gene_list=None,
         deg_list=None,
@@ -1099,8 +1099,8 @@ def mean_plot(
     # Parameters
     adata: `~anndata.AnnData`
         Contains real v
-    pred: `~anndata.AnnData`
-        Contains predicted values.
+    pred_obsm_key: `str`
+        Key in adata.obsm where predicted values are stored.
     condition_key: Str
         adata.obs key to look for x-axis and y-axis condition
     exp_key: Str
@@ -1137,130 +1137,131 @@ def mean_plot(
         raise ValueError("R2 caclulation should be one of" + str(r2_types))
     if sparse.issparse(adata.X):
         adata.X = adata.X.A
-    if sparse.issparse(pred.X):
-        pred.X = pred.X.A
-    diff_genes = deg_list
+    
+    if deg_list is not None:
+        if hasattr(deg_list, "tolist"):
+            deg_list = deg_list.tolist()
+        
+        deg_adata = adata[:, deg_list].copy()
 
-    if condition_key is not None and exp_key is not None:
-        real = adata[adata.obs[condition_key] == exp_key]
-        pred = pred[pred.obs[condition_key] == exp_key]
-    else:
-        real = adata.copy()
-        pred = pred.copy()
+        X_true_deg = np.array(deg_adata.X).mean(0)
+        X_pred_deg = np.array(deg_adata.obs[pred_obsm_key]).mean(0)
 
-    if diff_genes is not None:
-        if hasattr(diff_genes, "tolist"):
-            diff_genes = diff_genes.tolist()
-        real_diff = adata[:, diff_genes][adata.obs[condition_key] == exp_key]
-        pred_diff = pred[:, diff_genes][pred.obs[condition_key] == exp_key]
-        x_diff = np.average(pred_diff.X, axis=0)
-        y_diff = np.average(real_diff.X, axis=0)
         if R2_type == "R2":
-            r2_diff = r2_score(y_diff, x_diff)
+            r2_diff = r2_score(X_true_deg, X_pred_deg)
         if R2_type == "Pearson R2":
             m, b, pearson_r_diff, p_value_diff, std_err_diff = \
-                stats.linregress(y_diff, x_diff)
+                stats.linregress(X_true_deg, X_pred_deg)
             r2_diff = pearson_r_diff ** 2
         if verbose:
-            print(f'Top {len(diff_genes)} DEGs var: ', r2_diff)
+            print(f'Top {len(deg_list)} DEGs var: ', r2_diff)
 
-    x = np.average(pred.X, axis=0)
-    if isinstance(real.X, np.ndarray):
-        y = np.average(real.X, axis=0)
-    else:
-        y = np.average(real.X.toarray(), axis=0)
+    x_true = np.average(adata.X, axis=0)
+    x_pred = np.average(adata.obsm[pred_obsm_key], axis=0)
+    
     if R2_type == "R2":
-        r2 = r2_score(y, x)
-    if R2_type == "Pearson R2":
-        m, b, pearson_r, p_value, std_err = stats.linregress(y, x)
+        r2 = r2_score(x_true, x_pred)
+    
+    elif R2_type == "Pearson R2":
+        m, b, pearson_r, p_value, std_err = stats.linregress(x_true, x_pred)
         r2 = pearson_r ** 2
+    
     if verbose:
-        if isinstance(real.X, np.ndarray):
-            y_var = np.var(real.X, axis=0)
+        if isinstance(adata.X, np.ndarray):
+            x_true = np.var(adata.X, axis=0)
         else:
-            y_var = np.var(real.X.toarray(), axis=0)
-        x_var = np.var(pred.X, axis=0)
-        r2_var = r2_score(y_var, x_var)
+            x_true = np.var(adata.X.toarray(), axis=0)
+        x_pred = np.var(adata.obsm[pred_obsm_key], axis=0)
+
+        r2_var = r2_score(x_true, x_pred)
         print('All genes var: ', r2_var)
-    df = pd.DataFrame({f'{exp_key}_true': x, f'{exp_key}_pred': y})
+    
+    df = pd.DataFrame({f'true': x_true, f'pred': x_pred})
 
     plt.figure(figsize=figsize)
-    ax = sns.regplot(x=f'{exp_key}_true', y=f'{exp_key}_pred', data=df)
+    ax = sns.regplot(x=f'true', y=f'pred', data=df)
     ax.tick_params(labelsize=fontsize)
+    
     if "range" in kwargs:
         start, stop, step = kwargs.get("range")
         ax.set_xticks(np.arange(start, stop, step))
         ax.set_yticks(np.arange(start, stop, step))
+    
     ax.set_xlabel('true', fontsize=fontsize)
     ax.set_ylabel('pred', fontsize=fontsize)
+    
     if gene_list is not None:
         for i in gene_list:
             j = adata.var_names.tolist().index(i)
-            x_bar = x[j]
-            y_bar = y[j]
+            x_bar = x_true[j]
+            y_bar = x_pred[j]
             plt.text(x_bar, y_bar, i, fontsize=fontsize, color="black")
             plt.plot(x_bar, y_bar, 'o', color="red", markersize=5)
+    
     if title is None:
         plt.title(f"", fontsize=fontsize, fontweight="bold")
     else:
         plt.title(title, fontsize=fontsize, fontweight="bold")
-    ax.text(max(x) - max(x) * x_coeff, max(y) - y_coeff * max(y),
+    
+    ax.text(max(x_true) - max(x_true) * x_coeff, max(x_pred) - y_coeff * max(x_pred),
             r'$\mathrm{R^2_{\mathrm{\mathsf{all\ genes}}}}$= ' + f"{r2:.2f}",
             fontsize=fontsize)
-    if diff_genes is not None:
-        ax.text(max(x) - max(x) * x_coeff, max(y) - (y_coeff + 0.15) * max(y),
+    
+    if deg_list is not None:
+        ax.text(max(x_true) - max(x_true) * x_coeff, max(x_pred) - (y_coeff + 0.15) * max(x_pred),
                 r'$\mathrm{R^2_{\mathrm{\mathsf{DEGs}}}}$= ' + f"{r2_diff:.2f}",
                 fontsize=fontsize)
+        
     plt.savefig(f"{path_to_save}", bbox_inches='tight', dpi=100)
     if show:
         plt.show()
+    
     plt.close()
-    if diff_genes is not None:
+    
+    if deg_list is not None:
         return r2, r2_diff
     else:
         return r2
 
 
-def plot_r2_matrix(pred, adata, de_genes=None, **kwds):
+def plot_r2_matrix(adata, 
+                   pred_obsm_key, 
+                   deg_group_key,
+                   deg_uns_key: Optional[str] = None, 
+                   **kwargs):
     """Plots a pairwise R2 heatmap between predicted and control conditions.
 
     Params
     ------
-    pred : `AnnData`
-        Must have the field `cov_drug_dose_name`
     adata : `AnnData`
-        Original gene expression data, with the field `cov_drug_dose_name`.
-    de_genes : `dict`
-        Dictionary of de_genes, where the keys
-        match the categories in `cov_drug_dose_name`
+        Original AnnData object
+    pred_obsm_key : `str`
+        Key in `adata.obsm` where predicted values are stored
+    deg_group_key : `str`
+        Key in `adata.obs` where DEG group information is stored
+    deg_uns_key : `str`, optional (default: None)
+        Key in `adata.uns` where DEG information is stored. Keys are group names 
+        and values are list of DEGs for each group. If None, all genes are used.
     """
     r2s_mean = defaultdict(list)
     r2s_var = defaultdict(list)
-    conditions = pred.obs['cov_drug_dose_name'].cat.categories
-    for cond in conditions:
-        if de_genes:
-            degs = de_genes[cond]
-            y_pred = pred[:, degs][pred.obs['cov_drug_dose_name'] == cond].X
-            if not isinstance(y_pred, np.ndarray):
-                y_pred = y_pred.toarray()
-            y_true_adata = adata[:, degs]
-        else:
-            y_pred = pred[pred.obs['cov_drug_dose_name'] == cond].X
-            if not isinstance(y_pred, np.ndarray):
-                y_pred = y_pred.toarray()
-            y_true_adata = adata
+    groups = np.unique(adata.obs[deg_group_key].values)
+
+    for group1 in groups:
+        degs = adata.uns[deg_uns_key][group1] if deg_uns_key is not None else adata.var_names
+        x_pred = adata[adata.obs[deg_group_key] == group1][:, degs].obsm[pred_obsm_key]
 
         # calculate r2 between pairwise
-        for cond_real in conditions:
-            y_true = y_true_adata[y_true_adata.obs['cov_drug_dose_name'] == cond_real].X
-            if not isinstance(y_true, np.ndarray):
-                y_true = y_true.toarray()
-            r2s_mean[cond_real].append(r2_score(y_true.mean(axis=0), y_pred.mean(axis=0)))
-            r2s_var[cond_real].append(r2_score(y_true.var(axis=0), y_pred.var(axis=0)))
+        for group2 in groups:
+            x_true = adata[adata.obs[deg_group_key] == group2].X
+            if not isinstance(x_true, np.ndarray):
+                x_true = x_true.toarray()
+            r2s_mean[group2].append(r2_score(x_true.mean(axis=0), x_pred.mean(axis=0)))
+            r2s_var[group2].append(r2_score(x_true.var(axis=0), x_pred.var(axis=0)))
 
     for r2_dict in [r2s_mean, r2s_var]:
         r2_df = pd.DataFrame.from_dict(r2_dict, orient='index')
-        r2_df.columns = conditions
+        r2_df.columns = groups
 
         plt.figure(figsize=(5, 5))
         p = sns.heatmap(data=r2_df, vmin=max(r2_df.min(0).min(), -100),
@@ -1277,11 +1278,17 @@ def plot_history(model: CPA):
     df = model.epoch_history
     n_metrics = len(df.columns) - 2
     fig, ax = plt.subplots(1, n_metrics, sharex=True, sharey=False, figsize=(24, 2.))
-    for i in range(n_metrics):
+    for i, col in enumerate(df.columns):
+        if col in ['epoch', 'mode']:
+            continue
+
         train_df = df[df['mode'] == 'train']
         valid_df = df[df['mode'] == 'valid']
-        ax[i].plot(train_df['epoch'].values, train_df[df.columns[i + 2]].values, label='train')
-        ax[i].plot(valid_df['epoch'].values, valid_df[df.columns[i + 2]].values, label='valid')
+
+        ax[i].plot(train_df['epoch'].values, train_df[col].values, label='train')
+        if len(valid_df) > 0:
+            ax[i].plot(valid_df['epoch'].values, valid_df[col].values, label='valid')
+
         ax[i].set_title(df.columns[i + 2], fontweight="bold")
 
         if i == n_metrics - 1:

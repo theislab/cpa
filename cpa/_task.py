@@ -44,16 +44,83 @@ class CPATrainingPlan(TrainingPlan):
             use_layer_norm_adv: bool = False,
             dropout_rate_adv: float = 0.1,
             adv_lr=3e-4,
-            adv_wd=1e-6,
-            doser_lr=1e-4,
-            doser_wd=1e-6,
+            adv_wd=4e-7,
+            doser_lr=3e-4,
+            doser_wd=4e-7,
             step_size_lr: Optional[int] = 45,
             do_clip_grad: Optional[bool] = False,
             gradient_clip_value: Optional[float] = 3.0,
             drug_weights: Optional[list] = None,
-            adv_loss: Optional[str] = 'focal',
+            adv_loss: Optional[str] = 'cce',
     ):
-        """Training plan for the CPA model"""
+        """
+        Training plan for the CPA model. 
+
+        Parameters
+        ----------
+        module: CPAModule
+            The model to train.
+        covars_to_ncovars: dict
+            Dictionary of covariates to their unique values.
+        n_adv_perts: int
+            Number of all possible perturbations (single/combinatorial).
+        lr: float
+            Learning rate for the autoencoder.
+        wd: float
+            Weight decay for the autoencoder.
+        n_steps_pretrain_ae: Optional[int]
+            Number of steps to pretrain the autoencoder.
+        n_epochs_pretrain_ae: Optional[int]
+            Number of epochs to pretrain the autoencoder.
+        n_steps_kl_warmup: Optional[int]
+            Number of steps to warmup the KL term. Will be effective if `variational` has been set True for the model.
+        n_epochs_kl_warmup: Optional[int]
+            Number of epochs to warmup the KL term. Will be effective if `variational` has been set True for the model.
+        n_steps_adv_warmup: Optional[int]
+            Number of steps to warmup the adversarial term.
+        n_epochs_adv_warmup: Optional[int]
+            Number of epochs to warmup the adversarial term.
+        n_epochs_mixup_warmup: Optional[int]
+            Number of epochs to warmup the mixup term.
+        n_epochs_verbose: Optional[int]
+            Number of epochs to print the training progress.
+        mixup_alpha: float
+            Alpha parameter for the mixup term. set this to 0.0 to disable mixup.
+        adv_steps: int
+            Number of steps to train the adversarial term.
+        reg_adv: float
+            Regularization parameter for the adversarial term.
+        pen_adv: float
+            Penalty parameter for the adversarial term.
+        n_hidden_adv: int
+            Number of hidden units for the adversarial classifier.
+        n_layers_adv: int
+            Number of layers for the adversarial classifier.
+        use_batch_norm_adv: bool
+            Whether to use batch normalization for the adversarial classifier.
+        use_layer_norm_adv: bool
+            Whether to use layer normalization for the adversarial classifier.
+        dropout_rate_adv: float
+            Dropout rate for the adversarial classifier.
+        adv_lr: float
+            Learning rate for the adversarial classifier.
+        adv_wd: float
+            Weight decay for the adversarial classifier.
+        doser_lr: float
+            Learning rate for the dosers.
+        doser_wd: float
+            Weight decay for the dosers.
+        step_size_lr: Optional[int]
+            Step size for the learning rate scheduler.
+        do_clip_grad: Optional[bool]
+            Whether to clip the gradients.
+        gradient_clip_value: Optional[float]
+            Value to clip the gradients. Will be effective if `do_clip_grad` is True.
+        drug_weights: Optional[list]
+            Weights for the perturbations to be used in the adversarial loss.
+        adv_loss: Optional[str]
+            Adversarial loss to be used. Can be either 'cce' or 'focal'.
+        """
         super().__init__(
             module=module,
             lr=lr,
@@ -302,8 +369,7 @@ class CPATrainingPlan(TrainingPlan):
                     list(filter(lambda p: p.requires_grad, self.module.covars_embeddings.parameters()))
 
         if self.module.recon_loss in ['zinb', 'nb']:
-            ae_params += list(filter(lambda p: p.requires_grad, self.module.library_encoder.parameters())) + \
-                         [self.module.px_r]
+            ae_params += [self.module.px_r]
 
         optimizer_autoencoder = torch.optim.Adam(
             ae_params,
@@ -397,7 +463,7 @@ class CPATrainingPlan(TrainingPlan):
 
                 opt_adv.step()
 
-            elif batch_idx % self.adv_steps == 0:
+            elif batch_idx % self.adv_steps != 0:
                 opt_adv.zero_grad()
 
                 z_basal = inf_outputs['z_basal']

@@ -18,17 +18,17 @@ from typing import Optional
 
 class CPAModule(BaseModuleClass):
     """
-    CPA module using Gaussian/NegativeBinomial Likelihood
+    CPA module using Gaussian/NegativeBinomial/Zero-InflatedNegativeBinomial Likelihood
 
     Parameters
     ----------
         n_genes: int
             Number of input genes
-        n_treatments: int
-            Number of total different treatments (single/combinatorial)
+        n_perts: int,
+            Number of total unique perturbations
         covars_encoder: dict
             Dictionary of covariates with keys as each covariate name and values as
-                number of unique values of the corresponding covariate
+                unique values of the corresponding covariate
         n_latent: int
             dimensionality of the latent space
         recon_loss: str
@@ -36,14 +36,33 @@ class CPAModule(BaseModuleClass):
         doser_type: str
             Type of dosage network (either "logsigm", "sigm", or "linear")
         n_hidden_encoder: int
-
+            Number of hidden units in encoder
         n_layers_encoder: int
-
+            Number of layers in encoder
+        n_hidden_decoder: int
+            Number of hidden units in decoder
+        n_layers_decoder: int
+            Number of layers in decoder
+        n_hidden_doser: int
+            Number of hidden units in dosage network
+        n_layers_doser: int
+            Number of layers in dosage network
         use_batch_norm_encoder: bool
-
+            Whether to use batch norm in encoder
         use_layer_norm_encoder: bool
-
+            Whether to use layer norm in encoder
+        use_batch_norm_decoder: bool
+            Whether to use batch norm in decoder
+        use_layer_norm_decoder: bool
+            Whether to use layer norm in decoder
+        dropout_rate_encoder: float
+            Dropout rate in encoder
+        dropout_rate_decoder: float
+            Dropout rate in decoder
         variational: bool
+            Whether to use variational inference
+        seed: int
+            Random seed
     """
 
     def __init__(self,
@@ -117,16 +136,6 @@ class CPAModule(BaseModuleClass):
         if self.recon_loss in ['zinb', 'nb']:
             # setup the parameters of your generative model, as well as your inference model
             self.px_r = torch.nn.Parameter(torch.randn(self.n_genes))
-
-            # l encoder goes from n_input-dimensional data to 1-d library size
-            self.library_encoder = Encoder(
-                self.n_genes,
-                1,
-                n_layers=1,
-                n_hidden=128,
-                dropout_rate=dropout_rate_decoder,
-                return_dist=True,
-            )
 
             # decoder goes from n_latent-dimensional space to n_input-d data
             self.decoder = DecoderSCVI(
@@ -247,10 +256,11 @@ class CPAModule(BaseModuleClass):
         if self.recon_loss in ['nb', 'zinb']:
             # log the input to the variational distribution for numerical stability
             x_ = torch.log(1 + x)
-            ql, library = self.library_encoder(x_)
+
+            library = torch.log(x.sum(1)).unsqueeze(1)
         else:
             x_ = x
-            ql, library = None, None
+            library = None, None
 
         if self.variational:
             qz, z_basal = self.encoder(x_)
@@ -261,7 +271,9 @@ class CPAModule(BaseModuleClass):
             sampled_z = qz.sample((n_samples,))
             z_basal = self.encoder.z_transformation(sampled_z)
             if self.recon_loss in ['nb', 'zinb']:
-                library = ql.sample((n_samples,))
+                library = library.unsqueeze(0).expand(
+                    (n_samples, library.size(0), library.size(1))
+                )
 
         z_pert_true = self.pert_network(perts['true'], perts_doses['true'])
         if mixup_lambda < 1.0:
@@ -271,6 +283,9 @@ class CPAModule(BaseModuleClass):
             z_pert = z_pert_true
 
         z_covs = torch.zeros_like(z_basal)  # ([n_samples,] batch_size, n_latent)
+        z_covs_wo_batch = torch.zeros_like(z_basal)  # ([n_samples,] batch_size, n_latent)
+
+        batch_key = CPA_REGISTRY_KEYS.BATCH_KEY
         for covar, encoder in self.covars_encoder.items():
             z_cov = self.covars_embeddings[covar](covars_dict[covar].long())
             if len(encoder) > 1:
@@ -278,17 +293,21 @@ class CPAModule(BaseModuleClass):
                 z_cov = mixup_lambda * z_cov + (1. - mixup_lambda) * z_cov_mixup
             z_cov = z_cov.view(batch_size, self.n_latent)  # batch_size, n_latent
             z_covs += z_cov
+            
+            if covar != batch_key:
+                z_covs_wo_batch += z_cov
 
         z = z_basal + z_pert + z_covs
+        z_corrected = z_basal + z_pert + z_covs_wo_batch
 
         return dict(
             z=z,
+            z_corrected=z_corrected,
             z_basal=z_basal,
             z_covs=z_covs,
             z_pert=z_pert.sum(dim=1),
             library=library,
             qz=qz,
-            ql=ql,
             mixup_lambda=mixup_lambda,
         )
 
@@ -324,9 +343,8 @@ class CPAModule(BaseModuleClass):
 
             px = Normal(loc=px_mean, scale=px_var.sqrt())
 
-        pl = None
         pz = Normal(torch.zeros_like(z), torch.ones_like(z))
-        return dict(px=px, pz=pz, pl=pl)
+        return dict(px=px, pz=pz)
 
     def loss(self, tensors, inference_outputs, generative_outputs):
         """Computes the reconstruction loss (AE) or the ELBO (VAE)"""
@@ -342,6 +360,7 @@ class CPAModule(BaseModuleClass):
             kl_divergence_z = kl(qz, pz).sum(dim=1)
             kl_loss = kl_divergence_z.mean()
         else:
+            from scvi.model import SCVI
             kl_loss = torch.zeros_like(recon_loss)
 
         return recon_loss, kl_loss
@@ -351,49 +370,57 @@ class CPAModule(BaseModuleClass):
         assert mode in ['direct']
 
         x = tensors[CPA_REGISTRY_KEYS.X_KEY]  # batch_size, n_genes
+        indices = tensors[CPA_REGISTRY_KEYS.CATEGORY_KEY].view(-1,)
 
-        r2_mean = torch.tensor(0.0, device=x.device)
-        r2_var = torch.tensor(0.0, device=x.device)
+        unique_indices = indices.unique()
+
+        r2_mean = 0.0
+        r2_var = 0.0
 
         px = generative_outputs['px']
-        if self.recon_loss == 'gauss':
-            x_pred_mean = px.loc
-            x_pred_var = px.scale ** 2
+        for ind in unique_indices:
+            i_mask = indices == ind
 
-            if CPA_REGISTRY_KEYS.DEG_MASK_R2 in tensors.keys():
-                deg_mask = tensors[f'{CPA_REGISTRY_KEYS.DEG_MASK_R2}']
+            x_i = x[i_mask, :]
+            if self.recon_loss == 'gauss':
+                x_pred_mean = px.loc[i_mask, :]
+                x_pred_var = px.scale[i_mask, :] ** 2
 
-                x *= deg_mask
-                x_pred_mean *= deg_mask
-                x_pred_var *= deg_mask
+                if CPA_REGISTRY_KEYS.DEG_MASK_R2 in tensors.keys():
+                    deg_mask = tensors[f'{CPA_REGISTRY_KEYS.DEG_MASK_R2}'][i_mask, :]
 
-            x_pred_mean = torch.nan_to_num(x_pred_mean, nan=0, posinf=1e3, neginf=-1e3)
-            x_pred_var = torch.nan_to_num(x_pred_var, nan=0, posinf=1e3, neginf=-1e3)
+                    x_i *= deg_mask
+                    x_pred_mean *= deg_mask
+                    x_pred_var *= deg_mask
 
-            r2_mean = torch.nan_to_num(self.metrics['r2_score'](x_pred_mean.mean(0), x.mean(0)),
-                                       nan=0.0).item()
-            r2_var = torch.nan_to_num(self.metrics['r2_score'](x_pred_var.mean(0), x.var(0)),
-                                      nan=0.0).item()
+                x_pred_mean = torch.nan_to_num(x_pred_mean, nan=0, posinf=1e3, neginf=-1e3)
+                x_pred_var = torch.nan_to_num(x_pred_var, nan=0, posinf=1e3, neginf=-1e3)
 
-        elif self.recon_loss in ['nb', 'zinb']:
-            x = torch.log(1 + x)
-            x_pred = px.mu
-            x_pred = torch.log(1 + x_pred)
+                r2_mean += torch.nan_to_num(self.metrics['r2_score'](x_pred_mean.mean(0), x_i.mean(0)),
+                                        nan=0.0).item()
+                r2_var += torch.nan_to_num(self.metrics['r2_score'](x_pred_var.mean(0), x_i.var(0)),
+                                        nan=0.0).item()
 
-            x_pred = torch.nan_to_num(x_pred, nan=0, posinf=1e3, neginf=-1e3)
+            elif self.recon_loss in ['nb', 'zinb']:
+                x_i = torch.log(1 + x_i)
+                x_pred = px.mu[i_mask, :]
+                x_pred = torch.log(1 + x_pred)
 
-            if CPA_REGISTRY_KEYS.DEG_MASK_R2 in tensors.keys():
-                deg_mask = tensors[f'{CPA_REGISTRY_KEYS.DEG_MASK_R2}']
+                x_pred = torch.nan_to_num(x_pred, nan=0, posinf=1e3, neginf=-1e3)
 
-                x *= deg_mask
-                x_pred *= deg_mask
+                if CPA_REGISTRY_KEYS.DEG_MASK_R2 in tensors.keys():
+                    deg_mask = tensors[f'{CPA_REGISTRY_KEYS.DEG_MASK_R2}'][i_mask, :]
 
-            r2_mean = torch.nan_to_num(self.metrics['r2_score'](x_pred.mean(0), x.mean(0)),
-                                       nan=0.0).item()
-            r2_var = torch.nan_to_num(self.metrics['r2_score'](x_pred.var(0), x.var(0)),
-                                      nan=0.0).item()
+                    x_i *= deg_mask
+                    x_pred *= deg_mask
 
-        return r2_mean, r2_var
+                r2_mean += torch.nan_to_num(self.metrics['r2_score'](x_pred.mean(0), x_i.mean(0)),
+                                        nan=0.0).item()
+                r2_var += torch.nan_to_num(self.metrics['r2_score'](x_pred.var(0), x_i.var(0)),
+                                        nan=0.0).item()
+
+        n_unique_indices = len(unique_indices)
+        return r2_mean / n_unique_indices, r2_var / n_unique_indices
 
     def disentanglement(self, tensors, inference_outputs, generative_outputs, linear=True):
         z_basal = inference_outputs['z_basal'].detach().cpu().numpy()

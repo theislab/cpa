@@ -13,9 +13,10 @@ from typing import Optional
 class _REGISTRY_KEYS:
     X_KEY: str = "X"
     X_CTRL_KEY: str = None
-    BATCH_KEY: str = "cpa_batch"
+    BATCH_KEY: str = None
     CATEGORY_KEY: str = "cpa_category"
     PERTURBATION_KEY: str = None
+    PERTURBATION_DOSAGE_KEY: str = None
     PERTURBATIONS: str = "perts"
     PERTURBATIONS_DOSAGES: str = "perts_doses"
     SIZE_FACTOR_KEY: str = "size_factor"
@@ -62,7 +63,12 @@ class VanillaEncoder(nn.Module):
         self.z = nn.Linear(n_hidden, n_output)
 
     def forward(self, inputs, *cat_list):
-        z = self.z(self.network(inputs, *cat_list))
+        if self.output_activation == 'linear':
+            z = self.z(self.network(inputs, *cat_list))
+        elif self.output_activation == 'relu':
+            z = F.relu(self.z(self.network(inputs, *cat_list)))
+        else:
+            raise ValueError(f'Unknown output activation: {self.output_activation}')
         return z
 
 
@@ -82,6 +88,7 @@ class GeneralizedSigmoid(nn.Module):
         super(GeneralizedSigmoid, self).__init__()
         self.non_linearity = non_linearity
         self.n_drugs = n_drugs
+
         self.beta = torch.nn.Parameter(
             torch.ones(1, n_drugs),
             requires_grad=True
@@ -135,7 +142,7 @@ class PerturbationNetwork(nn.Module):
                  dropout_rate: float = 0.0):
         super().__init__()
         self.n_latent = n_latent
-        self.pert_embedding = nn.Embedding(n_perts + 1, n_latent, padding_idx=CPA_REGISTRY_KEYS.PADDING_IDX)
+        self.pert_embedding = nn.Embedding(n_perts, n_latent, padding_idx=CPA_REGISTRY_KEYS.PADDING_IDX)
         self.doser_type = doser_type
         if self.doser_type == 'mlp':
             self.dosers = nn.ModuleList()
@@ -165,9 +172,9 @@ class PerturbationNetwork(nn.Module):
 
         z_drugs = torch.einsum('bm,bme->bme', [scaled_dosages, drug_embeddings])  # (batch_size, n_latent)
 
-        z_drugs = torch.einsum('bmn,bm->bmn', z_drugs, (perts > 0).int()).sum(dim=1)  # mask single perts
+        z_drugs = torch.einsum('bmn,bm->bmn', z_drugs, (perts != CPA_REGISTRY_KEYS.PADDING_IDX).int()).sum(dim=1)  # mask single perts
 
-        return z_drugs
+        return z_drugs # (batch_size, n_latent)
 
 class FocalLoss(nn.Module):
     """ Inspired by https://github.com/AdeelH/pytorch-multi-class-focal-loss/blob/master/focal_loss.py
