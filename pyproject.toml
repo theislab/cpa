@@ -71,7 +71,7 @@ docs = [
     "jinja2<3.0.3",
     "scanpy",
     "sphinx",
-    "scipy==1.8.0",
+    "scipy=1.8.0",
     "scanpydoc",
     "nbsphinx",
     "nbsphinx-link",
