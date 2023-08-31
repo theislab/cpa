@@ -68,10 +68,10 @@ scipy = "^1.8.0"
 dev = ["black", "pytest", "flake8", "codecov", "scanpy", "loompy", "jupyter",
     "nbformat", "nbconvert", "pre-commit", "isort"]
 docs = [
-    "jinja2<3.0.3",
+#    "jinja2<3.0.3",
     "scanpy",
     "sphinx",
-    "scipy=1.8.0",
+    "scipy",
     "scanpydoc",
     "nbsphinx",
     "nbsphinx-link",
@@ -82,7 +82,7 @@ docs = [
     "sphinx_gallery",
     "sphinx-rtd-theme",
 ]
-tutorials = ["scanpy", "leidenalg", "python-igraph", "loompy", "scikit-misc", "scipy==1.8.0"]
+tutorials = ["scanpy", "leidenalg", "python-igraph", "loompy", "scikit-misc", "scipy"]
 
 [tool.poetry.dev-dependencies]
 
