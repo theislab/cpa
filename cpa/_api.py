@@ -40,6 +40,8 @@ class ComPertAPI:
             Key for the perturbation category in `adata.obs`, by default 'cov_drug_dose_name'
         control_group : str, optional
             Name of the control group, by default 'ctrl'
+        experiment : str, optional
+            Type of experiment, by default 'drug'. Can be 'drug' or 'gene'.
         """
         self.perturbation_key = CPA_REGISTRY_KEYS.PERTURBATION_KEY
         self.dose_key = CPA_REGISTRY_KEYS.PERTURBATION_DOSAGE_KEY
@@ -138,8 +140,7 @@ class ComPertAPI:
         If return_anndata is True, returns anndata object. Otherwise, doesn't
         return anything. Always saves embeddding in self.emb_perts.
         """
-        embeddings = self.model.get_pert_embeddings(dose)
-        return AnnData(X=embeddings, obs={self.perturbation_key: self.unique_perts})
+        return self.model.get_pert_embeddings(dose)
 
     def get_covars_embeddings(self, covariate: str):
         """
@@ -153,11 +154,7 @@ class ComPertAPI:
         If return_anndata is True, returns anndata object. Otherwise, doesn't
         return anything. Always saves embeddding in self.emb_covars.
         """
-        self.emb_covars = self.model.get_covar_embeddings(covariate)
-
-        adata = sc.AnnData(self.emb_covars)
-        adata.obs[covariate] = self.unique_covars[covariate]
-        return adata
+        return self.model.get_covar_embeddings(covariate)
 
     def get_drug_encoding_(self, drugs, doses=None):
         """
