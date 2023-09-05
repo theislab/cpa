@@ -1141,11 +1141,13 @@ def mean_plot(
     if deg_list is not None:
         if hasattr(deg_list, "tolist"):
             deg_list = deg_list.tolist()
+
+        adata.layers[pred_obsm_key] = adata.obsm[pred_obsm_key].copy()
         
         deg_adata = adata[:, deg_list].copy()
 
-        X_true_deg = np.array(deg_adata.X).mean(0)
-        X_pred_deg = np.array(deg_adata.obs[pred_obsm_key]).mean(0)
+        X_true_deg = np.average(deg_adata.X, axis=0)
+        X_pred_deg = np.average(deg_adata.layers[pred_obsm_key], axis=0)
 
         if R2_type == "R2":
             r2_diff = r2_score(X_true_deg, X_pred_deg)
@@ -1179,7 +1181,7 @@ def mean_plot(
     df = pd.DataFrame({f'true': x_true, f'pred': x_pred})
 
     plt.figure(figsize=figsize)
-    ax = sns.regplot(x=f'true', y=f'pred', data=df)
+    ax = sns.regplot(x=f'pred', y=f'true', data=df)
     ax.tick_params(labelsize=fontsize)
     
     if "range" in kwargs:

@@ -668,7 +668,7 @@ class CPA(BaseModelClass):
         else:
             raise NotImplementedError
 
-        embeds = self.module.pert_network(treatments).detach().cpu().numpy() # (1 or n_drugs, n_latent)
+        embeds = self.module.pert_network(treatments, treatments_dosages).detach().cpu().numpy() # (1 or n_drugs, n_latent)
         pert_latent_adata = AnnData(X=embeds)
         pert_latent_adata.obs['pert_name'] = [pert] if pert is not None else self.pert_encoder.keys()
 
@@ -697,7 +697,7 @@ class CPA(BaseModelClass):
         if covariate_value is None:
             covar_ids = torch.arange(
                 len(self.covars_encoder[covariate]), device=self.device
-            ).long().unsquee(1)
+            ).long().unsqueeze(1)
         else:
             covar_ids = torch.LongTensor(
                 [self.covars_encoder[covariate][covariate_value]]
