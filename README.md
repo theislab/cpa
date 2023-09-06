@@ -17,6 +17,11 @@ Usage and installation
 -------------------------------
 See [here](https://cpa-tools.readthedocs.io/en/latest/index.html) for documentation and tutorials.
 
+Datasets and Pre-trained models
+-------------------------------
+Datasets and pre-trained models are available [here](https://drive.google.com/drive/folders/1yFB0gBr72_KLLp1asojxTgTqgz6cwpju?usp=drive_link).
+
+
 Support and contribute
 -------------------------------
 If you have a question or new architecture or a model that could be integrated into our pipeline, you can
