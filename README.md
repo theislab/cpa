@@ -7,15 +7,20 @@
 
 `CPA` is a framework to learn the effects of perturbations at the single-cell level. CPA encodes and learns phenotypic drug responses across different cell types, doses, and combinations. CPA allows:
 
-* Out-of-distribution predictions of unseen drug combinations at various doses and among different cell types.
+* Out-of-distribution predictions of unseen drug and gene combinations at various doses and among different cell types.
 * Learn interpretable drug and cell-type latent spaces.
 * Estimate the dose-response curve for each perturbation and their combinations.
-* Access the uncertainty of the estimations of the model.
+* Transfer pertubration effects from on cell-type to an unseen cell-type.
 
 
 Usage and installation
 -------------------------------
 See [here](https://cpa-tools.readthedocs.io/en/latest/index.html) for documentation and tutorials.
+
+
+How to optmize CPA hyperparamters for your data
+-------------------------------
+
 
 Datasets and Pre-trained models
 -------------------------------
