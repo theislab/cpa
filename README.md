@@ -30,3 +30,20 @@ Support and contribute
 -------------------------------
 If you have a question or new architecture or a model that could be integrated into our pipeline, you can
 post an [issue](https://github.com/theislab/cpa/issues/new)
+
+Reference
+-------------------------------
+
+
+If CPA is helpful in your research, please consider citing the  [Lotfollahi et al. 2023](https://www.embopress.org/doi/full/10.15252/msb.202211517)
+
+
+    @article{lotfollahi2023predicting,
+    title={Predicting cellular responses to complex perturbations in high-throughput screens},
+    author={Lotfollahi, Mohammad and Klimovskaia Susmelj, Anna and De Donno, Carlo and Hetzel, Leon and Ji, Yuge and Ibarra, Ignacio L and Srivatsan, Sanjay R and Naghipourfar, Mohsen and Daza, Riza M and 
+    Martin, Beth and others},
+    journal={Molecular Systems Biology},
+    pages={e11517},
+    year={2023}
+    }
+
