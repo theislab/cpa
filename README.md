@@ -39,11 +39,11 @@ If CPA is helpful in your research, please consider citing the  [Lotfollahi et a
 
 
     @article{lotfollahi2023predicting,
-    title={Predicting cellular responses to complex perturbations in high-throughput screens},
-    author={Lotfollahi, Mohammad and Klimovskaia Susmelj, Anna and De Donno, Carlo and Hetzel, Leon and Ji, Yuge and Ibarra, Ignacio L and Srivatsan, Sanjay R and Naghipourfar, Mohsen and Daza, Riza M and 
-    Martin, Beth and others},
-    journal={Molecular Systems Biology},
-    pages={e11517},
-    year={2023}
+        title={Predicting cellular responses to complex perturbations in high-throughput screens},
+        author={Lotfollahi, Mohammad and Klimovskaia Susmelj, Anna and De Donno, Carlo and Hetzel, Leon and Ji, Yuge and Ibarra, Ignacio L and Srivatsan, Sanjay R and Naghipourfar, Mohsen and Daza, Riza M and 
+        Martin, Beth and others},
+        journal={Molecular Systems Biology},
+        pages={e11517},
+        year={2023}
     }
 
