@@ -1,5 +1,4 @@
-# CPA - Compositional Perturbation Autoencoder
-
+#  CPA - Compositional Perturbation Autoencoder [![PyPI version](https://badge.fury.io/py/CPA.svg)](https://badge.fury.io/py/cpa) [![Documentation Status](https://readthedocs.org/projects/cpa/badge/?version=latest)](https://cpa.readthedocs.io/en/latest/?badge=latest) [![Downloads](https://pepy.tech/badge/scgen)](https://pepy.tech/project/cpa)
 
 ## What is CPA?
 
