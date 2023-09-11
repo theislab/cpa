@@ -192,8 +192,8 @@ class CPATrainingPlan(TrainingPlan):
             {
                 key: Classifier(n_input=self.module.n_latent,
                                 n_labels=len(unique_covars),
-                                n_hidden=self.n_hidden_adv,
-                                n_layers=self.n_layers_adv,
+                                n_hidden=n_hidden_adv,
+                                n_layers=n_layers_adv,
                                 use_batch_norm=use_batch_norm_adv,
                                 use_layer_norm=use_layer_norm_adv,
                                 dropout_rate=dropout_rate_adv,
