@@ -69,6 +69,7 @@ class CPAModule(BaseModuleClass):
                  n_genes: int,
                  n_perts: int,
                  covars_encoder: dict,
+                 drug_embeddings: Optional[np.ndarray] = None,
                  n_latent: int = 128,
                  recon_loss: str = "nb",
                  doser_type: str = "logsigm",
@@ -168,6 +169,7 @@ class CPAModule(BaseModuleClass):
                                                 doser_type=doser_type,
                                                 n_hidden=n_hidden_doser,
                                                 n_layers=n_layers_doser,
+                                                drug_embeddings=drug_embeddings,
                                                 )
 
         # 2. Covariates Embedding

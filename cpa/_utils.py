@@ -139,10 +139,19 @@ class PerturbationNetwork(nn.Module):
                  doser_type='logsigm',
                  n_hidden=None,
                  n_layers=None,
-                 dropout_rate: float = 0.0):
+                 dropout_rate: float = 0.0,
+                 drug_embeddings=None,):
         super().__init__()
         self.n_latent = n_latent
-        self.pert_embedding = nn.Embedding(n_perts, n_latent, padding_idx=CPA_REGISTRY_KEYS.PADDING_IDX)
+        
+        if drug_embeddings is not None:
+            self.pert_embedding = drug_embeddings
+            self.pert_transformation = nn.Linear(drug_embeddings.embedding_dim, n_latent)
+            self.use_rdkit = True
+        else:
+            self.use_rdkit = False
+            self.pert_embedding = nn.Embedding(n_perts, n_latent, padding_idx=CPA_REGISTRY_KEYS.PADDING_IDX)
+            
         self.doser_type = doser_type
         if self.doser_type == 'mlp':
             self.dosers = nn.ModuleList()
@@ -166,9 +175,14 @@ class PerturbationNetwork(nn.Module):
             perts: (batch_size, max_comb_len)
             dosages: (batch_size, max_comb_len)
         """
+        bs, max_comb_len = perts.shape
         perts = perts.long()
         scaled_dosages = self.dosers(dosages, perts)  # (batch_size, max_comb_len)
-        drug_embeddings = self.pert_embedding(perts)  # (batch_size, max_comb_len, n_latent)
+
+        drug_embeddings = self.pert_embedding(perts)  # (batch_size, max_comb_len, n_drug_emb_dim)
+
+        if self.use_rdkit:
+            drug_embeddings = self.pert_transformation(drug_embeddings.view(bs * max_comb_len, -1)).view(bs, max_comb_len, -1)
 
         z_drugs = torch.einsum('bm,bme->bme', [scaled_dosages, drug_embeddings])  # (batch_size, n_latent)
 
