@@ -47,7 +47,7 @@ def test_cpa():
     dataset = data["dataset"]
     model = cpa.CPA(adata=dataset,
                     n_latent=128,
-                    loss_ae='gauss',
+                    recon_loss='gauss',
                     doser_type='logsigm',
                     split_key='split',
                     )
