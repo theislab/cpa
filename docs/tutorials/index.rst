@@ -2,12 +2,13 @@
 Tutorials
 =========
 
-If you are interested in predicting the effect of a drug and its combinations, check the demo with all hyper-parameters for combo sci-plex dataset (`Lotfollahi et al., 2023 <https://www.embopress.org/doi/full/10.15252/msb.202211517>`_), check this example:
+If you are interested in predicting the effect of a drug and its combinations, check the demo with all hyper-parameters for combo sci-plex dataset (`Lotfollahi et al., 2023 <https://www.embopress.org/doi/full/10.15252/msb.202211517>`_), check the following examples:
 
 .. toctree::
     :maxdepth: 1
 
     combosciplex
+    combosciplex_Rdkit_embeddings
 
 If you are interested in predicting the effect of CRISPRi or  CRISPRa perturbations (gene perturbations) and their combinations, check the demo with all hyper-parameters for (`Norman et al., 2019 dataset <https://www.science.org/doi/10.1126/science.aax4438>`_), check:
 
