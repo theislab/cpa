@@ -4,6 +4,11 @@ import os
 from tkinter import N
 from typing import Optional, Sequence, Union, List, Dict
 
+from rdkit import Chem
+from rdkit.Chem import AllChem
+
+import torch.nn as nn
+
 import numpy as np
 import pandas as pd
 import torch
@@ -81,6 +86,7 @@ class CPA(BaseModelClass):
 
     covars_encoder: dict = None
     pert_encoder: dict = None
+    pert_smiles_map: dict = None
 
     def __init__(
         self,
@@ -89,6 +95,7 @@ class CPA(BaseModelClass):
         train_split: Union[str, List[str]] = "train",
         valid_split: Union[str, List[str]] = "test",
         test_split: Union[str, List[str]] = "ood",
+        use_rdkit_embeddings: bool = False,
         **hyper_params,
     ):
         super().__init__(adata)
@@ -100,6 +107,11 @@ class CPA(BaseModelClass):
             covar: list(self.covars_encoder[covar].keys())
             for covar in self.covars_encoder.keys()
         }
+
+        if use_rdkit_embeddings and self.pert_smiles_map is not None:
+            # get morgan fingerprint vectors for drug embeddings
+            drug_embeddings = self.__get_rdkit_embeddings()
+            hyper_params['drug_embeddings'] = drug_embeddings
 
         self.module = CPAModule(
             n_genes=adata.n_vars,
@@ -132,6 +144,41 @@ class CPA(BaseModelClass):
 
         self.epoch_history = None
 
+    def __get_rdkit_embeddings(
+        self, 
+    ):
+        assert self.pert_smiles_map not in [None, []]
+        query_drug_names = list(self.pert_encoder.keys())
+        query_drug_names.remove('<PAD>')
+
+        smiles_list = [self.pert_smiles_map[drug] for drug in list(query_drug_names)]
+
+        drug_fps = []
+        for smiles in smiles_list:
+            mol = Chem.MolFromSmiles(smiles)
+            fps = AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2048)
+            drug_fps.append(np.array(fps))
+        
+        drug_fps = np.vstack(drug_fps)
+
+        print(drug_fps.shape)
+
+        embeddings = AnnData(X=drug_fps)
+        embeddings.obs.index = smiles_list
+        embeddings = embeddings[list(smiles_list), :]
+
+        drug_embeddings = nn.Embedding(
+            len(self.pert_encoder),
+            embeddings.shape[1],
+            padding_idx=CPA_REGISTRY_KEYS.PADDING_IDX,
+        )
+        pad_X = np.zeros(shape=(1, embeddings.n_vars))
+        X = np.concatenate((pad_X, embeddings.X), 0)
+        drug_embeddings.weight.data.copy_(torch.tensor(X))
+        drug_embeddings.weight.requires_grad = False
+
+        return drug_embeddings
+
     @classmethod
     @setup_anndata_dsp.dedent
     def setup_anndata(
@@ -142,6 +189,7 @@ class CPA(BaseModelClass):
         dosage_key: Optional[str] = None,
         batch_key: Optional[str] = None,
         layer: Optional[str] = None,
+        smiles_key: Optional[str] = None,
         is_count_data: Optional[bool] = True,
         categorical_covariate_keys: Optional[List[str]] = None,
         deg_uns_key: Optional[str] = None,
@@ -219,6 +267,28 @@ class CPA(BaseModelClass):
         else:
             pert_encoder = cls.pert_encoder
             perts_names_unique = list(pert_encoder.keys())
+
+        if cls.pert_smiles_map is None:
+            pert_smiles_map = {}
+            for pert in perts_names_unique:
+                if pert != "<PAD>":
+                    try:
+                        pert_smiles_map[pert] = adata.obs.loc[
+                            adata.obs[perturbation_key] == pert, smiles_key
+                        ].values[0]
+                    except:
+                        pert_name = adata.obs.loc[
+                            adata.obs[perturbation_key].str.contains(pert), perturbation_key
+                        ].values[0]
+
+                        smiles = adata.obs.loc[
+                            adata.obs[perturbation_key].str.contains(pert), smiles_key
+                        ].values[0]
+
+                        pert_smiles_map[pert] = smiles.split('..')[pert_name.split('+').index(pert)]
+            cls.pert_smiles_map = pert_smiles_map
+        else:
+            pert_smiles_map = cls.pert_smiles_map
 
         pert_map = {}
         for condition in tqdm(perturbations):
@@ -737,6 +807,7 @@ class CPA(BaseModelClass):
         total_dict = {
             "pert_encoder": self.pert_encoder,
             "covars_encoder": self.covars_encoder,
+            "pert_smiles_map": self.pert_smiles_map,
         }
 
         json_dict = json.dumps(total_dict)
@@ -792,6 +863,8 @@ class CPA(BaseModelClass):
 
             cls.pert_encoder = total_dict["pert_encoder"]
             cls.covars_encoder = total_dict["covars_encoder"]
+            cls.pert_smiles_map = total_dict.get("pert_smiles_map", None)
+            
 
         model = super().load(dir_path, adata, use_gpu)
 
