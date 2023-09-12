@@ -35,7 +35,7 @@ toml = ">=0.10"
 importlib-metadata = { version = "^1.0", python = "<=3.10" }
 pytest = { version = ">=4.4", optional = true }
 python = "^3.10"
-scvi-tools = ">=0.16.4"
+scvi-tools = "^0.20.2"
 scanpy = "^1.9.5"
 scipy = {version = "*"}
 rdkit-pypi = "^2022.9.5"
@@ -61,7 +61,6 @@ docs = [
     "sphinx-autodoc-typehints",
     "sphinx_gallery",
     "sphinx-rtd-theme",
-    "pydata-sphinx-theme",
 ]
 tutorials = ["scanpy", "leidenalg", "python-igraph", "loompy", "scikit-misc", "scipy", "toml"]
 
