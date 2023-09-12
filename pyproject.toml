@@ -1,56 +1,35 @@
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
-
 [tool.poetry]
 name = "cpa-tools"
+version = "0.8.1"
 description = "Compositional Perturbation Autoencoder (CPA)"
-version = "0.8.0"
-readme = "README.md"
+authors = ["Mohsen Naghipourfar <naghipourfar@berkeley.edu>"]
 license = "MIT"
-homepage = "https://cpa-tools.readthedocs.io/en/latest/"
-repository = "https://github.com/theislab/cpa"
-documentation = "https://cpa-tools.readthedocs.io/en/latest/"
-
-authors = [
-    "Mohsen Naghipourfar <naghipourfar@berkeley.edu>",
-    "Mohammad Lotfollahi <mohammad.lotfollahi@helmholtz-muenchen.de>",
-]
-
-classifiers = [
-  "Development Status :: 4 - Beta",
-  "Intended Audience :: Science/Research",
-  "Natural Language :: English",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Operating System :: MacOS :: MacOS X",
-  "Operating System :: Microsoft :: Windows",
-  "Operating System :: POSIX :: Linux",
-  "Topic :: Scientific/Engineering :: Bio-Informatics",
-]
-
+readme = "README.md"
 packages = [
     {include = "cpa"},
 ]
 
 [tool.poetry.dependencies]
 python = "^3.9"
-adjustText="*"
-# "anndata>=0.7.5",
-importlib-metadata="*"
-scvi-tools = { version = ">=0.20,<1.0" }
-scanpy="*"
-scipy="*"
-rdkit-pypi="*"
-torch = { version = ">1.8.0,<2.0.0" }
-# "llvmlite>=0.40.1",
-# "chex==0.1.8",
-# "numba>=0.57.1",
-# "numpy>=1.24.4",
-pytest = "*"
-pytest-cov = "*"
+scipy = "*"
+scvi-tools = ">=0.20.3,<1.0.0"
+importlib-metadata = "*"
+scanpy = "*"
+rdkit-pypi = "*"
 
-[tool.poetry.dev-dependencies]
+scanpydoc = "*"
+sphinx = "*"
+nbsphinx = "*"
+nbsphinx-link = "*"
+ipython = "*"
+toml = "*"
+pydata-sphinx-theme = "*"
+typing_extensions = "*"
+sphinx-autodoc-typehints = "*"
+sphinx_gallery = "*"
+sphinx-rtd-theme = "*"
+
+[tool.poetry.group.dev.dependencies]
 pytest = "*"
 pytest-cov = "*"
 black = "*"
@@ -58,49 +37,13 @@ flake8 = "*"
 jupyter = "*"
 nbformat = "*"
 nbconvert = "*"
-pre-commit = "*"
+
 
 [tool.poetry.extras]
-tests = [
-    "pytest",
-    "pytest-cov",
-]  
-autotune = ["ray", "ipython", "tensorboard"]
+docs = ["scanpy", "sphinx", "scipy", "scanpydoc", "nbsphinx", "nbsphinx-link", "ipython", 
+        "toml", "pydata-sphinx-theme", "typing_extensions", "sphinx-autodoc-typehints", 
+        "sphinx_gallery", "sphinx-rtd-theme"]
 
-docs = [
-    "scanpy",
-    "sphinx",
-    "scipy",
-    "scanpydoc",
-    "nbsphinx",
-    "nbsphinx-link",
-    "ipython",
-    "toml",
-    "pydata-sphinx-theme",
-    "typing_extensions",
-    "sphinx-autodoc-typehints",
-    "sphinx_gallery",
-    "sphinx-rtd-theme",
-]
-tutorials = [
-    "scanpy", 
-    "leidenalg", 
-    "python-igraph", 
-    "loompy", 
-    "scikit-misc", 
-    "scipy", 
-    "toml"
-]
-
-[tool.hatch.build.targets.wheel]
-packages = ['cpa']
-
-[tool.distutils.bdist_wheel]
-universal = true
-
-[tool.coverage.run]
-source = ["cpa"]
-omit = [
-    "**/test_*.py",
-]
-
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
