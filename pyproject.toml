@@ -38,10 +38,11 @@ python = "^3.10"
 scvi-tools = ">=0.16.4"
 scanpy = "^1.9.5"
 scipy = {version = "*"}
-torch = {version = ">=1.13.1"}
+torch = {version = ">=1.8.0"}
 rdkit-pypi = "^2022.9.5"
 llvmlite = "^0.40.1"
 numba = "^0.57.1"
+numpy = "^1.24.4"
 
 [tool.poetry.extras]
 dev = ["black", "pytest", "flake8", "codecov", "scanpy", "loompy", "jupyter",
