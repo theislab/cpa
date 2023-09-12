@@ -41,6 +41,7 @@ scipy = {version = "*"}
 torch = {version = ">=1.13.1"}
 rdkit-pypi = "^2022.9.5"
 llvmlite = "^0.40.1"
+numba = "^0.57.1"
 
 [tool.poetry.extras]
 dev = ["black", "pytest", "flake8", "codecov", "scanpy", "loompy", "jupyter",
