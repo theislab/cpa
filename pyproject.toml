@@ -35,7 +35,7 @@ dependencies = [
     "anndata>=0.7.5",
     "toml>=0.10",
     "importlib-metadata",
-    "python>=3.10",
+    "python>=3.9",
     "scvi-tools>=0.20.2",
     "scanpy>=1.9.5",
     "scipy",
