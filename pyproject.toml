@@ -38,7 +38,7 @@ adjustText="*"
 # "anndata>=0.7.5",
 importlib-metadata="*"
 scvi-tools = { version = "^0.20.2" }
-scanpy = { version = ">=1.9.5" }
+scanpy="*"
 scipy="*"
 rdkit-pypi="*"
 # "llvmlite>=0.40.1",
