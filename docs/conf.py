@@ -14,6 +14,16 @@ from pathlib import Path
 HERE = Path(__file__).parent
 sys.path[:0] = [str(HERE.parent), str(HERE / "extensions")]
 
+from unittest.mock import MagicMock
+
+class Mock(MagicMock):
+    @classmethod
+    def __getattr__(cls, name):
+        return MagicMock()
+
+MOCK_MODULES = ['torch', 'torch.nn', ...]  # add other torch sub-modules if needed
+sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
+
 import cpa  # noqa
 
 # -- General configuration ---------------------------------------------

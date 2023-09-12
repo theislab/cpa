@@ -9,7 +9,6 @@ build:
       - pip install poetry
       - poetry config virtualenvs.create false
     post_install:
-      - pip install torch==1.13.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
       - poetry install -E docs
 
 sphinx:
