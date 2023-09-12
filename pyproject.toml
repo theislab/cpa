@@ -76,21 +76,8 @@ scanpy = [
 docsbuild = ["cpa-tools[docs,optional]"]  # docs build dependencies
 optional = [
     "cpa-tools[autotune,scanpy]"
-]  #
+] 
 
-
-[tool.hatch.build.targets.wheel]
-packages = ['cpa']
-
-[tool.coverage.run]
-source = ["cpa"]
-omit = [
-    "**/test_*.py",
-]
-
-[tool.poetry.extras]
-dev = ["black", "pytest", "flake8", "codecov", "scanpy", "loompy", "jupyter",
-    "nbformat", "nbconvert", "pre-commit", "isort"]
 docs = [
 #    "jinja2<3.0.3",
     "scanpy",
@@ -115,5 +102,14 @@ tutorials = [
     "scikit-misc", 
     "scipy", 
     "toml"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ['cpa']
+
+[tool.coverage.run]
+source = ["cpa"]
+omit = [
+    "**/test_*.py",
 ]
 
