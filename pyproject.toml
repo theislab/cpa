@@ -22,7 +22,6 @@ documentation = "https://cpa-tools.readthedocs.io"
 homepage = "https://github.com/theislab/cpa/"
 license = "BSD-3-Clause"
 name = "cpa-tools"
-requires-python = ">=3.9"
 packages = [
     { include = "cpa" },
 ]
