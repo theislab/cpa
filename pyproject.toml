@@ -37,7 +37,7 @@ pytest = { version = ">=4.4", optional = true }
 python = "^3.10"
 scvi-tools = ">=0.16.4"
 scanpy = "^1.9.5"
-scipy = "^1.11.2"
+scipy = {version = "*"}
 rdkit-pypi = "^2022.9.5"
 
 [tool.poetry.extras]
