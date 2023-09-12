@@ -7,9 +7,9 @@ build:
   jobs:
     post_create_environment:
       - pip install poetry
-      - pip install torch==1.13.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
       - poetry config virtualenvs.create false
     post_install:
+      - pip install torch==1.13.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
       - poetry install -E docs
 
 sphinx:
