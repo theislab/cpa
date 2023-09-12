@@ -34,39 +34,38 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
+python = "^3.9"
 adjustText="*"
 # "anndata>=0.7.5",
 importlib-metadata="*"
-scvi-tools = { version = ">=0.20<1.0" }
+scvi-tools = { version = ">=0.20,<1.0" }
 scanpy="*"
 scipy="*"
 rdkit-pypi="*"
+torch = { version = ">1.8.0,<2.0.0" }
 # "llvmlite>=0.40.1",
 # "chex==0.1.8",
 # "numba>=0.57.1",
 # "numpy>=1.24.4",
+pytest = "*"
+pytest-cov = "*"
+
+[tool.poetry.dev-dependencies]
+pytest = "*"
+pytest-cov = "*"
+black = "*"
+flake8 = "*"
+jupyter = "*"
+nbformat = "*"
+nbconvert = "*"
+pre-commit = "*"
 
 [tool.poetry.extras]
 tests = [
     "pytest",
     "pytest-cov",
 ]  
-editing = [
-    "black",
-    "flake8",
-    "jupyter",
-    "nbformat",
-    "nbconvert",
-    "pre-commit",
-    "ruff",
-]  # dependencies for editing and committing code
-# dev = ["cpa-tools[editing,tests]"]  # dependencies for dev work
-
-autotune = [
-    "ray",
-    "ipython",
-    "tensorboard",
-]  
+autotune = ["ray", "ipython", "tensorboard"]
 
 docs = [
     "scanpy",
