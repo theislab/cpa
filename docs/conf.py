@@ -29,7 +29,6 @@ sys.path[:0] = [str(HERE.parent), str(HERE / "extensions")]
 
 # -- General configuration ---------------------------------------------
 info = metadata("cpa-tools")
-print(info)
 project_name = info["Name"]
 author = info["Author"]
 copyright = f"{datetime.now():%Y}, {author}."
