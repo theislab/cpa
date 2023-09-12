@@ -12,10 +12,63 @@
 * Transfer pertubration effects from on cell-type to an unseen cell-type.
 
 
-Usage and installation
--------------------------------
-See [here](https://cpa-tools.readthedocs.io/en/latest/index.html) for documentation and tutorials.
+## Installation
 
+### Requirements 
+
+#### Conda Environment
+We recommend using [Anaconda](https://www.anaconda.com/)/[Miniconda](https://docs.conda.io/projects/miniconda/en/latest/) to create a conda environment for using CPA. You can create a python environment using the following command:
+
+```bash
+conda create -n cpa python=3.8
+```
+
+Then, you can activate the environment using:
+
+```bash
+conda activate cpa
+```
+#### Pytorch
+CPA is implemented in Pytorch and **requires Pytorch version >= 1.13.1**.
+
+##### OSX
+```bash
+pip install torch==1.13.1
+```
+##### Linux and Windows
+If you have access to GPUs, you can install the GPU version of Pytorch following the instructions [here](https://pytorch.org/get-started/previous-versions/).
+
+Sample command for installing Pytorch 1.13.1 on different CUDA versions:
+
+```bash
+# ROCM 5.2 (Linux only)
+pip install torch==1.13.1+rocm5.2 --extra-index-url https://download.pytorch.org/whl/rocm5.2
+# CUDA 11.6
+pip install torch==1.13.1+cu116 --extra-index-url https://download.pytorch.org/whl/cu116
+# CUDA 11.7
+pip install torch==1.13.1+cu117 --extra-index-url https://download.pytorch.org/whl/cu117
+# CPU only
+pip install torch==1.13.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+```
+
+### Installing CPA
+You can install CPA using pip:
+
+```bash
+pip install cpa-tools
+```
+
+
+## How to use CPA
+Several tutorials are available [here](https://cpa-tools.readthedocs.io/en/latest/tutorials/index.html) to get you started with CPA.
+The following table contains the list of tutorials:
+
+| Dataset | Year | Description | Link |
+| --- | --- | --- | --- |
+| Combo Sci-Plex | 2022 | CPA Training demo on combo sciplex | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/theislab/cpa/blob/master/docs/tutorials/combosciplex.ipynb) - [![Open In Documentation](https://img.shields.io/badge/docs-blue)](https://cpa-tools.readthedocs.io/en/latest/tutorials/combosciplex.html) |
+| Combo Sci-Plex | 2022 | CPA Training demo on combo sciplex with rdkit embeddings as pretrained drug embeddings | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/theislab/cpa/blob/master/docs/tutorials/combosciplex_Rdkit_embeddings.ipynb) - [![Open In Documentation](https://img.shields.io/badge/docs-blue)](https://cpa-tools.readthedocs.io/en/latest/tutorials/combosciplex_Rdkit_embeddings.html) |
+| Norman et al. | 2019 | CPA Training demo on Norman CRISPR scRNA perturbation dataset | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/theislab/cpa/blob/master/docs/tutorials/Norman.ipynb) - [![Open In Documentation](https://img.shields.io/badge/docs-blue)](https://cpa-tools.readthedocs.io/en/latest/tutorials/Norman.html) |
+| Kang et al. | 2018 | Context transfer (i.e. predict the effect of a perturbation (e.g. disease) on unseen cell types or transfer perturbation effects from one context to another) demo on IFN-β scRNA perturbation dataset | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/theislab/cpa/blob/master/docs/tutorials/Kang.ipynb) - [![Open In Documentation](https://img.shields.io/badge/docs-blue)](https://cpa-tools.readthedocs.io/en/latest/tutorials/Kang.html) |
 
 How to optmize CPA hyperparamters for your data
 -------------------------------
@@ -33,8 +86,6 @@ post an [issue](https://github.com/theislab/cpa/issues/new)
 
 Reference
 -------------------------------
-
-
 If CPA is helpful in your research, please consider citing the  [Lotfollahi et al. 2023](https://www.embopress.org/doi/full/10.15252/msb.202211517)
 
 
