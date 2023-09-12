@@ -1,20 +1,20 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
 
-[project]
+[tool.poetry]
 name = "cpa-tools"
 description = "Compositional Perturbation Autoencoder (CPA)"
 version = "0.8.0"
-requires-python = ">=3.10.12,<3.11"
 readme = "README.md"
-license = {file = "LICENSE"}
-documentation = "https://cpa-tools.readthedocs.io"
-homepage = "https://github.com/theislab/cpa/"
+license = "MIT"
+homepage = "https://cpa-tools.readthedocs.io/en/latest/"
+repository = "https://github.com/theislab/cpa"
+documentation = "https://cpa-tools.readthedocs.io/en/latest/"
 
 authors = [
-    {name = "Mohsen Naghipourfar", email = "naghipourfar@berkeley.edu"},
-    {name = "Mohammad Lotfollahi", email = "mohammad.lotfollahi@helmholtz-muenchen.de"},
+    "Mohsen Naghipourfar <naghipourfar@berkeley.edu>",
+    "Mohammad Lotfollahi <mohammad.lotfollahi@helmholtz-muenchen.de>",
 ]
 
 classifiers = [
@@ -29,28 +29,28 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 
-dependencies = [
-    "adjustText",
-    "anndata>=0.7.5",
-    "toml>=0.10",
-    "importlib-metadata",
-    "python>=3.10.12",
-    "scvi-tools>=0.20.2",
-    "scanpy>=1.9.5",
-    "scipy",
-    "rdkit-pypi>=2022.9.5",
-    "llvmlite>=0.40.1",
-    "chex==0.1.8",
-    "numba>=0.57.1",
-    "numpy>=1.24.4",
+packages = [
+    {include = "cpa"},
 ]
 
-[project.optional-dependencies]
+[tool.poetry.dependencies]
+adjustText="*"
+# "anndata>=0.7.5",
+importlib-metadata="*"
+scvi-tools = { version = "^0.20.2" }
+scanpy = { version = ">=1.9.5" }
+scipy="*"
+rdkit-pypi="*"
+# "llvmlite>=0.40.1",
+# "chex==0.1.8",
+# "numba>=0.57.1",
+# "numpy>=1.24.4",
+
+[tool.poetry.extras]
 tests = [
     "pytest",
     "pytest-cov",
-    "cpa-tools[optional]",
-]  # dependencies for running the test suite
+]  
 editing = [
     "black",
     "flake8",
@@ -60,10 +60,10 @@ editing = [
     "pre-commit",
     "ruff",
 ]  # dependencies for editing and committing code
-dev = ["cpa-tools[editing,tests]"]  # dependencies for dev work
+# dev = ["cpa-tools[editing,tests]"]  # dependencies for dev work
 
 autotune = [
-    "ray[tune]>=2.5.0",
+    "ray",
     "ipython",
     "tensorboard",
 ]  
@@ -72,13 +72,9 @@ scanpy = [
     "scanpy"
 ]
 
-docsbuild = ["cpa-tools[docs,optional]"]  # docs build dependencies
-optional = [
-    "cpa-tools[autotune,scanpy]"
-] 
+# docsbuild = ["cpa-tools[docs]"]  # docs build dependencies
 
 docs = [
-#    "jinja2<3.0.3",
     "scanpy",
     "sphinx",
     "scipy",
@@ -105,6 +101,9 @@ tutorials = [
 
 [tool.hatch.build.targets.wheel]
 packages = ['cpa']
+
+[tool.distutils.bdist_wheel]
+universal = true
 
 [tool.coverage.run]
 source = ["cpa"]
