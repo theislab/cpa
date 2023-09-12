@@ -22,6 +22,7 @@ documentation = "https://cpa-tools.readthedocs.io"
 homepage = "https://github.com/theislab/cpa/"
 license = "BSD-3-Clause"
 name = "cpa-tools"
+requires-python = ">=3.9"
 packages = [
     { include = "cpa" },
 ]
@@ -32,12 +33,12 @@ version = "0.7.2"
 adjustText = { version = "*", optional = true }
 anndata = ">=0.7.5"
 toml = ">=0.10"
-importlib-metadata = { version = "^1.0", python = "<3.8" }
+importlib-metadata = { version = "^1.0", python = "<=3.10" }
 pytest = { version = ">=4.4", optional = true }
 python = "^3.10"
 scvi-tools = ">=0.16.4"
 scanpy = "^1.9.5"
-scipy = { version = "*" }
+scipy = "^1.11.2"
 rdkit-pypi = "^2022.9.5"
 
 [tool.poetry.extras]
@@ -58,6 +59,7 @@ docs = [
     "sphinx-autodoc-typehints",
     "sphinx_gallery",
     "sphinx-rtd-theme",
+    "pydata-sphinx-theme",
 ]
 tutorials = ["scanpy", "leidenalg", "python-igraph", "loompy", "scikit-misc", "scipy", "toml"]
 
