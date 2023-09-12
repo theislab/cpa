@@ -37,7 +37,7 @@ packages = [
 adjustText="*"
 # "anndata>=0.7.5",
 importlib-metadata="*"
-scvi-tools = { version = ">=0.20" }
+scvi-tools = { version = ">=0.20<1.0" }
 scanpy="*"
 scipy="*"
 rdkit-pypi="*"
@@ -67,12 +67,6 @@ autotune = [
     "ipython",
     "tensorboard",
 ]  
-
-scanpy = [
-    "scanpy"
-]
-
-# docsbuild = ["cpa-tools[docs]"]  # docs build dependencies
 
 docs = [
     "scanpy",
