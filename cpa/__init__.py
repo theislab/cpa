@@ -7,16 +7,14 @@ from ._module import CPAModule
 from . import _plotting as pl
 from ._api import ComPertAPI
 
-try:
-    import importlib.metadata as importlib_metadata
-except:
-    import importlib_metadata
+from importlib.metadata import version
 
-# package_name = "cpa-tools"
-# __version__ = importlib_metadata.version(package_name)
+package_name = "cpa-tools"
+__version__ = version(package_name)
 
-# __all__ = [
-#     "CPA",
-#     "CPAModule",
-#     "ComPertAPI",
-# ]
+__all__ = [
+    "CPA",
+    "CPAModule",
+    "ComPertAPI",
+    "pl",
+]

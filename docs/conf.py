@@ -3,30 +3,47 @@
 # This file only contains a selection of the most common options. For a full
 # list see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+from importlib.metadata import metadata
+from datetime import datetime
 
 # -- Path setup --------------------------------------------------------------
-
+import os
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).parent
 sys.path[:0] = [str(HERE.parent), str(HERE / "extensions")]
 
-from unittest.mock import MagicMock
+# from unittest.mock import MagicMock
 
-class Mock(MagicMock):
-    @classmethod
-    def __getattr__(cls, name):
-        return MagicMock()
+# class Mock(MagicMock):
+#     @classmethod
+#     def __getattr__(cls, name):
+#         return MagicMock()
 
-MOCK_MODULES = ['torch', 'torch.nn', 'torch.optim', 'torch.utils', 'pytorch_lightning', 'pytorch_lightning.callbacks', 'torch.distributions', 'pyro']  
-sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
+# MOCK_MODULES = ['torch', 'torch.nn', 'torch.optim', 'torch.utils', 'pytorch_lightning', 'pytorch_lightning.callbacks', 'torch.distributions', 'pyro', 'pyro.distributions', 'torch.nn.functional', 'pyro.infer', 'pyro.nn', 'pyro.infer.predictive']  
+# sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
 
-import cpa  # noqa
+# import cpa  # noqa
 
 # -- General configuration ---------------------------------------------
+info = metadata("cpa-tools")
+print(info)
+project_name = info["Name"]
+author = info["Author"]
+copyright = f"{datetime.now():%Y}, {author}."
+version = info["Version"]
+repository_url = f"https://github.com/theislab/{project_name}"
+
+# The full version, including alpha/beta/rc tags
+release = info["Version"]
+
+bibtex_bibfiles = ["references.bib"]
+templates_path = ["_templates"]
+nitpicky = True  # Warn about broken links
+needs_sphinx = "4.0"
+
 
 # If your documentation needs a minimal Sphinx version, state it here.
 #
@@ -101,16 +118,12 @@ intersphinx_mapping = dict(
 # General information about the project.
 project = u"cpa-tools"
 copyright = u"2022, TheisLab, ICB"
-author = u"Mohsen Naghipourfar"
+author = u"CPA Team"
 
 # The version info for the project you're documenting, acts as replacement
 # for |version| and |release|, also used in various other places throughout
 # the built documents.
 #
-import toml
-
-pyproject = toml.load("../pyproject.toml")
-version = pyproject['tool']['poetry']['version']
 release = version
 
 # # The short X.Y version.
@@ -179,3 +192,22 @@ nbsphinx_prolog = r"""
     </p>
     </div>
 """
+
+hoverx_default_type = "tooltip"
+hoverxref_domains = ["py"]
+hoverxref_role_types = dict.fromkeys(
+    ["ref", "class", "func", "meth", "attr", "exc", "data", "mod"],
+    "tooltip",
+)
+hoverxref_intersphinx = [
+    "python",
+    "numpy",
+    "scanpy",
+    "anndata",
+    "pytorch_lightning",
+    "scipy",
+    "pandas",
+]
+# use proxied API endpoint on rtd to avoid CORS issues
+if os.environ.get("READTHEDOCS"):
+    hoverxref_api_host = "/_"
