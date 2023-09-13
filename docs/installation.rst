@@ -4,49 +4,44 @@ Installation
 Prerequisites
 ~~~~~~~~~~~~~~
 
-CPA can be installed via PyPI.
+Conda Environment
+#################
+We recommend using `Anaconda <https://www.anaconda.com/>`_ / `Miniconda <https://docs.conda.io/projects/miniconda/en/latest/>`_ to create a conda environment for using CPA. You can create a python environment using the following command:
 
-conda prerequisites
-###################
+    conda create -n cpa python=3.8
 
-1. Install Conda. We typically use the Miniconda_ Python distribution. Use Python version >=3.7.
+Then, you can activate the environment using:
 
-2. Create a new conda environment::
+    conda activate cpa
 
-    conda create -n cpa-env python=3.7
+Pytorch
+########
+CPA is implemented in Pytorch and **requires Pytorch version >= 1.13.1**.
 
-3. Activate your environment::
+OSX
+---
+You can install Pytorch 1.13.1 using the following command:
 
-    source activate cpa-env
+    pip install torch==1.13.1
 
-pip prerequisites:
-##################
+Linux and Windows
+-----------------
 
-1. Install Python_, we prefer the `pyenv <https://github.com/pyenv/pyenv/>`_ version management system, along with `pyenv-virtualenv <https://github.com/pyenv/pyenv-virtualenv/>`_.
+If you have access to GPUs, you can install the GPU version of Pytorch following the instructions [here](https://pytorch.org/get-started/previous-versions/).
 
-2. Install PyTorch_. If you have an Nvidia GPU, be sure to install a version of PyTorch that supports it -- cpa-tools runs much faster with a discrete GPU.
+Sample command for installing Pytorch 1.13.1 on different CUDA versions:
 
-.. _Miniconda: https://conda.io/miniconda.html
-.. _Python: https://www.python.org/downloads/
-.. _PyTorch: http://pytorch.org
+    # ROCM 5.2 (Linux only)
+    pip install torch==1.13.1+rocm5.2 --extra-index-url https://download.pytorch.org/whl/rocm5.2
+    # CUDA 11.6
+    pip install torch==1.13.1+cu116 --extra-index-url https://download.pytorch.org/whl/cu116
+    # CUDA 11.7
+    pip install torch==1.13.1+cu117 --extra-index-url https://download.pytorch.org/whl/cu117
+    # CPU only
+    pip install torch==1.13.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
 
-CPA installation
-~~~~~~~~~~~~~~~~~~~~~~~
+Installing CPA
+##############
+Finally, You can install latest version of CPA using pip:
 
-Install cpa-tools in one of the following ways:
-
-Through **pip**::
-
-    pip install cpa-tools
-
-Through pip with packages to run notebooks. This installs scanpy, etc.::
-
-    pip install cpa-tools[tutorials]
-
-Nightly version - clone this repo and run::
-
-    pip install .
-
-For development - clone this repo and run::
-
-    pip install -e .[dev,docs]
+    pip install cpa-tools --upgrade
