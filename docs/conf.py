@@ -25,14 +25,16 @@ sys.path[:0] = [str(HERE.parent), str(HERE / "extensions")]
 # MOCK_MODULES = ['torch', 'torch.nn', 'torch.optim', 'torch.utils', 'pytorch_lightning', 'pytorch_lightning.callbacks', 'torch.distributions', 'pyro', 'pyro.distributions', 'torch.nn.functional', 'pyro.infer', 'pyro.nn', 'pyro.infer.predictive']  
 # sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
 
-# import cpa  # noqa
+import cpa  # noqa
 
 # -- General configuration ---------------------------------------------
 info = metadata("cpa-tools")
+print('*' * 100)
+print(info)
 project_name = info["Name"]
 author = info["Author"]
 copyright = f"{datetime.now():%Y}, {author}."
-version = info["Version"]
+version = cpa.__version__
 repository_url = f"https://github.com/theislab/{project_name}"
 
 # The full version, including alpha/beta/rc tags
