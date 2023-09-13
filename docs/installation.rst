@@ -32,14 +32,21 @@ If you have access to GPUs, you can install the GPU version of Pytorch following
 Sample command for installing Pytorch 1.13.1 on different CUDA versions:
 
     # ROCM 5.2 (Linux only)
+
     pip install torch==1.13.1+rocm5.2 --extra-index-url https://download.pytorch.org/whl/rocm5.2
-    
+
     # CUDA 11.6
+    
     pip install torch==1.13.1+cu116 --extra-index-url https://download.pytorch.org/whl/cu116
+    
     # CUDA 11.7
+    
     pip install torch==1.13.1+cu117 --extra-index-url https://download.pytorch.org/whl/cu117
+    
     # CPU only
+    
     pip install torch==1.13.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+
 
 Installing CPA
 ##############
