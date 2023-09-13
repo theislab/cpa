@@ -43,10 +43,13 @@ Sample command for installing Pytorch 1.13.1 on different CUDA versions:
 ```bash
 # ROCM 5.2 (Linux only)
 pip install torch==1.13.1+rocm5.2 --extra-index-url https://download.pytorch.org/whl/rocm5.2
+
 # CUDA 11.6
 pip install torch==1.13.1+cu116 --extra-index-url https://download.pytorch.org/whl/cu116
+
 # CUDA 11.7
 pip install torch==1.13.1+cu117 --extra-index-url https://download.pytorch.org/whl/cu117
+
 # CPU only
 pip install torch==1.13.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
 ```
@@ -71,12 +74,65 @@ The following table contains the list of tutorials:
 | Kang et al. | 2018 | Context transfer (i.e. predict the effect of a perturbation (e.g. disease) on unseen cell types or transfer perturbation effects from one context to another) demo on IFN-β scRNA perturbation dataset | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/theislab/cpa/blob/master/docs/tutorials/Kang.ipynb) - [![Open In Documentation](https://img.shields.io/badge/docs-blue)](https://cpa-tools.readthedocs.io/en/latest/tutorials/Kang.html) |
 
 How to optmize CPA hyperparamters for your data
--------------------------------
-
+-----------------------------------------------
+We provide a [tutorial](https://cpa-tools.readthedocs.io/en/latest/tutorials/optimizing_hyperparameters.html) on how to optimize CPA hyperparameters for your data.
 
 Datasets and Pre-trained models
 -------------------------------
 Datasets and pre-trained models are available [here](https://drive.google.com/drive/folders/1yFB0gBr72_KLLp1asojxTgTqgz6cwpju?usp=drive_link).
+
+
+Recepie for Pre-processing a custom scRNAseq perturbation dataset
+-----------------------------------------------------------------
+If you have access to you raw data, you can do the following steps to pre-process your dataset. A raw dataset should be a [scanpy](https://scanpy.readthedocs.io/en/stable/) object containing raw counts and available required metadata (i.e. perturbation, dosage, etc.).
+
+Pre-processing steps
+--------------------
+0. Check for required information in cellmetadata:
+    a) Perturbation information should be in `adata.obs`.
+    b) Dosage information should be in `adata.obs`. In cases like CRISPR gene knockouts, disease states, time perturbations, etc, you can create & add a dummy dosage in your `adata.obs`. For example:
+    ```python
+        adata.obs['dosage'] = adata.obs['perturbation'].astype(str).apply(lambda x: '+'.join(['1.0' for _ in x.split('+')])).values
+    ```
+    c) [If available] Cell type information should be in `adata.obs`.
+    d) [**Multi-batch** integration] Batch information should be in `adata.obs`.
+
+1. Filter out cells with low number of counts (`sc.pp.filter_cells`). For example:
+    ```python
+    sc.pp.filter_cells(adata, min_counts=100)
+    ```
+
+    [optional]
+    ```python
+    sc.pp.filter_genes(adata, min_counts=5)
+    ```
+    
+2. Save the raw counts in `adata.layers['counts']`.
+    ```python
+    adata.layers['counts'] = adata.X.copy()
+    ```
+3. Normalize the counts (`sc.pp.normalize_total`).
+    ```python
+    sc.pp.normalize_total(adata, target_sum=1e4, exclude_highly_expressed=True)
+    ```
+4. Log transform the normalized counts (`sc.pp.log1p`).
+    ```python
+    sc.pp.log1p(adata)
+    ```
+5. Highly variable genes selection:
+    There are two options:
+        1. Use the `sc.pp.highly_variable_genes` function to select highly variable genes.
+        ```python
+            sc.pp.highly_variable_genes(adata, n_top_genes=5000, subset=True)
+        ```
+        2. (**Highly Recommended** specially for **Multi-batch** integration scenarios) Use scIB's [highly variable genes selection](https://scib.readthedocs.io/en/latest/api/scib.preprocessing.hvg_batch.html#scib.preprocessing.hvg_batch) function to select highly variable genes. This function is more robust to batch effects and can be used to select highly variable genes across multiple datasets.
+        ```python
+            import scIB
+            adata_hvg = scIB.pp.hvg_batch(adata, batch_key='batch', n_top_genes=5000, copy=True)
+        ```
+
+
+Congrats! Now you're dataset is ready to be used with CPA. Don't forget to save your pre-processed dataset using `adata.write_h5ad` function.
 
 
 Support and contribute

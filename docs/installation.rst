@@ -8,7 +8,7 @@ Conda Environment
 #################
 We recommend using `Anaconda <https://www.anaconda.com/>`_ / `Miniconda <https://docs.conda.io/projects/miniconda/en/latest/>`_ to create a conda environment for using CPA. You can create a python environment using the following command:
 
-    conda create -n cpa python=3.8
+    conda create -n cpa python=3.9
 
 Then, you can activate the environment using:
 
@@ -33,6 +33,7 @@ Sample command for installing Pytorch 1.13.1 on different CUDA versions:
 
     # ROCM 5.2 (Linux only)
     pip install torch==1.13.1+rocm5.2 --extra-index-url https://download.pytorch.org/whl/rocm5.2
+    
     # CUDA 11.6
     pip install torch==1.13.1+cu116 --extra-index-url https://download.pytorch.org/whl/cu116
     # CUDA 11.7
