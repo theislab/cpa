@@ -27,7 +27,7 @@ You can install Pytorch 1.13.1 using the following command:
 Linux and Windows
 -----------------
 
-If you have access to GPUs, you can install the GPU version of Pytorch following the instructions [here](https://pytorch.org/get-started/previous-versions/).
+If you have access to GPUs, you can install the GPU version of Pytorch following the instructions `here <https://pytorch.org/get-started/previous-versions/>`_ .
 
 Sample command for installing Pytorch 1.13.1 on different CUDA versions:
 
