@@ -1268,7 +1268,7 @@ def plot_r2_matrix(adata,
         plt.figure(figsize=(5, 5))
         p = sns.heatmap(data=r2_df, vmin=max(r2_df.min(0).min(), -100),
                         cmap='Blues', cbar=False, square=True, xticklabels=True, yticklabels=True,
-                        annot=True, fmt='.2f', annot_kws={'fontsize': 5}, **kwds)
+                        annot=True, fmt='.2f', annot_kws={'fontsize': 5}, **kwargs)
         plt.xticks(fontsize=6)
         plt.yticks(fontsize=6)
         plt.xlabel('y_true')
