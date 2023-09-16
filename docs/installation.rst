@@ -27,7 +27,7 @@ You can install Pytorch 1.13.1 using the following command:
 Linux and Windows
 -----------------
 
-If you have access to GPUs, you can install the GPU version of Pytorch following the instructions [here](https://pytorch.org/get-started/previous-versions/).
+If you have access to GPUs, you can install the GPU version of Pytorch following the instructions `here <https://pytorch.org/get-started/previous-versions/>`_ .
 
 Sample command for installing Pytorch 1.13.1 on different CUDA versions:
 
@@ -47,9 +47,33 @@ Sample command for installing Pytorch 1.13.1 on different CUDA versions:
     
     pip install torch==1.13.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
 
-
 Installing CPA
 ##############
 Finally, You can install latest version of CPA using pip:
 
     pip install cpa-tools --upgrade
+
+Dependencies
+##############
+Install `scanpy` afterwards:
+
+    pip install scanpy
+
+Colab
+##############
+If working on Google Colab, run the following cell at the beginning:
+
+.. code-block:: python
+
+    import sys
+    #if branch is stable, will install via pypi, else will install from source
+    branch = "stable"
+    IN_COLAB = "google.colab" in sys.modules
+    
+    if IN_COLAB and branch == "stable":
+        !pip install cpa-tools
+        !pip install scanpy
+    elif IN_COLAB and branch != "stable":
+        !pip install --quiet --upgrade jsonschema
+        !pip install git+https://github.com/theislab/cpa
+        !pip install scanpy
