@@ -268,27 +268,28 @@ class CPA(BaseModelClass):
             pert_encoder = cls.pert_encoder
             perts_names_unique = list(pert_encoder.keys())
 
-        if cls.pert_smiles_map is None:
-            pert_smiles_map = {}
-            for pert in perts_names_unique:
-                if pert != "<PAD>":
-                    try:
-                        pert_smiles_map[pert] = adata.obs.loc[
-                            adata.obs[perturbation_key] == pert, smiles_key
-                        ].values[0]
-                    except:
-                        pert_name = adata.obs.loc[
-                            adata.obs[perturbation_key].str.contains(pert), perturbation_key
-                        ].values[0]
+        if smiles_key is not None:
+            if cls.pert_smiles_map is None:
+                pert_smiles_map = {}
+                for pert in perts_names_unique:
+                    if pert != "<PAD>":
+                        try:
+                            pert_smiles_map[pert] = adata.obs.loc[
+                                adata.obs[perturbation_key] == pert, smiles_key
+                            ].values[0]
+                        except:
+                            pert_name = adata.obs.loc[
+                                adata.obs[perturbation_key].str.contains(pert), perturbation_key
+                            ].values[0]
 
-                        smiles = adata.obs.loc[
-                            adata.obs[perturbation_key].str.contains(pert), smiles_key
-                        ].values[0]
+                            smiles = adata.obs.loc[
+                                adata.obs[perturbation_key].str.contains(pert), smiles_key
+                            ].values[0]
 
-                        pert_smiles_map[pert] = smiles.split('..')[pert_name.split('+').index(pert)]
-            cls.pert_smiles_map = pert_smiles_map
-        else:
-            pert_smiles_map = cls.pert_smiles_map
+                            pert_smiles_map[pert] = smiles.split('..')[pert_name.split('+').index(pert)]
+                cls.pert_smiles_map = pert_smiles_map
+            else:
+                pert_smiles_map = cls.pert_smiles_map
 
         pert_map = {}
         for condition in tqdm(perturbations):
