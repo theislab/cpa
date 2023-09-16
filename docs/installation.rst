@@ -47,27 +47,21 @@ Sample command for installing Pytorch 1.13.1 on different CUDA versions:
     
     pip install torch==1.13.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
 
-Dependencies
-##############
-CPA is implemented in Pytorch Lightning <= 1.9.x
-
-To install the right version of libraries:
-
-    pip install scvi-tools==0.20.3
-
-Scanpy:
-
-    pip install scanpy
-
 Installing CPA
 ##############
 Finally, You can install latest version of CPA using pip:
 
     pip install cpa-tools --upgrade
 
+Dependencies
+##############
+Install `scanpy` afterwards:
+
+    pip install scanpy
+
 Colab
 ##############
-If working on Google Colab, run the following cell at the beginning, restart the runtime from ``Runtime`` --> ``Restart runtime``, and start your work:
+If working on Google Colab, run the following cell at the beginning:
 
 .. code-block:: python
 
@@ -78,14 +72,8 @@ If working on Google Colab, run the following cell at the beginning, restart the
     
     if IN_COLAB and branch == "stable":
         !pip install cpa-tools
-        !pip install scvi-tools==0.20.3
         !pip install scanpy
-        !pip install --force-reinstall numpy==1.22.4
     elif IN_COLAB and branch != "stable":
         !pip install --quiet --upgrade jsonschema
-        !pip install --quiet git+https://github.com/theislab/cpa
-        !pip install scvi-tools==0.20.3
+        !pip install git+https://github.com/theislab/cpa
         !pip install scanpy
-        !pip install --force-reinstall numpy==1.22.4
-    
-    # if IN_COLAB: Restart runtime after running this cell for the first time
