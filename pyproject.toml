@@ -10,14 +10,18 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = ">=3.9, <3.11"
+llvmlite = "^0.40"
 scipy = "*"
 scvi-tools = ">=0.20.3,<1.0.0"
 importlib-metadata = "*"
 scanpy = "*"
 rdkit-pypi = "*"
-torch = { version = ">1.8.0,<2.0.0" }
+torch = { version = ">1.8.0,<=2.0.1" }
 adjustText = "*"
+numpy = '>=1.22.4,<1.24'
+seaborn = "*"
+gdown = "*"
 
 # Optional dependencies
 pytest = "*"
