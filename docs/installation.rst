@@ -49,9 +49,9 @@ Sample command for installing Pytorch 1.13.1 on different CUDA versions:
 
 Installing CPA
 ##############
-Finally, You can install latest version of CPA using pip:
+Finally, You can install latest version of CPA through our Github:
 
-    pip install cpa-tools --upgrade
+    pip install git+https://github.com/theislab/cpa
 
 Dependencies
 ##############
@@ -67,7 +67,7 @@ If working on Google Colab, run the following cell at the beginning:
 
     import sys
     #if branch is stable, will install via pypi, else will install from source
-    branch = "stable"
+    branch = "latest"
     IN_COLAB = "google.colab" in sys.modules
     
     if IN_COLAB and branch == "stable":
