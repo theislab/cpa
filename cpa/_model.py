@@ -191,7 +191,7 @@ class CPA(BaseModelClass):
         layer: Optional[str] = None,
         smiles_key: Optional[str] = None,
         is_count_data: Optional[bool] = True,
-        categorical_covariate_keys: Optional[List[str]] = None,
+        categorical_covariate_keys: Optional[List[str]] = [],
         deg_uns_key: Optional[str] = None,
         deg_uns_cat_key: Optional[str] = None,
         max_comb_len: int = 2,
@@ -683,7 +683,7 @@ class CPA(BaseModelClass):
         xs = []
         for tensors in tqdm(scdl):
             x_pred = (
-                self.module.get_expression(tensors, n_samples=n_samples)
+                self.module.get_expression(tensors, n_samples=n_samples)['px']
                 .detach()
                 .cpu()
                 .numpy()
@@ -701,6 +701,169 @@ class CPA(BaseModelClass):
 
         adata.obsm[f"{self.__class__.__name__}_pred"] = x_pred
 
+def custom_predict(
+    self,
+    # output: str = "reconstruction",
+    covars_to_add: Optional[Sequence[str]] = None,
+    add_batch: bool = True,
+    add_pert: bool = True,
+    adata: Optional[AnnData] = None,
+    indices: Optional[Sequence[int]] = None,
+    batch_size: Optional[int] = 32,
+    n_samples: int = 20,
+    return_mean: bool = True,
+) -> AnnData:
+    """
+    Predicts the output of the model on the given input data.
+
+    Args:
+        output (str): The type of output to return. Can be "reconstruction" or "latent".
+        covars_to_add (Optional[Sequence[str]]): Covariates to add to the basal latent representation.
+        add_batch (bool): Whether to add the batch covariate to the latent representation.
+        add_pert (bool): Whether to add the perturbation covariate to the latent representation.
+        adata (Optional[AnnData]): The input data to predict on.
+        indices (Optional[Sequence[int]]): The indices of the cells to predict on.
+        batch_size (Optional[int]): The batch size to use for prediction.
+        n_samples (int): The number of samples to use for stochastic prediction.
+        return_mean (bool): Whether to return the mean of the samples or all the samples.
+
+    Returns:
+        Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]: The predicted output of the model.
+        If `output` is "reconstruction", returns the reconstructed data.
+        If `output` is "latent", returns the latent representation of the data.
+        If `return_mean` is True, returns only the mean of the samples.
+        If `return_mean` is False, returns all the samples.
+    """
+    # assert output in ["reconstruction", "latent"]
+    if covars_to_add is None:
+        covars_to_add = []
+    for covar in covars_to_add:
+        assert covar in self.covars_encoder.keys(), f"covariate {covar} not found in learned covariates"
+    
+        # get_inference_input_kwargs: dict | None = None,
+        # get_generative_input_kwargs: dict | None = None,
+        # inference_kwargs: dict | None = None,
+        # generative_kwargs: dict | None = None,
+
+    # z, z_corrected, z_no_pert, z_basal
+    if add_batch and add_pert:
+        latent_key = "z"
+    elif add_batch:
+        latent_key = "z_no_pert"
+    elif add_pert:
+        latent_key = "z_corrected"
+    else:
+        latent_key = "z_no_pert_corrected"
+        
+    assert self.module.recon_loss in ["gauss", "nb", "zinb"]
+    self.module.eval()
+
+    adata = self._validate_anndata(adata)
+    if indices is None:
+        indices = np.arange(adata.n_obs)
+    scdl = self._make_data_loader(
+        adata=adata, indices=indices, batch_size=batch_size, shuffle=False
+    )
+    xs = []
+    zs = []
+    z_correcteds = []
+    z_no_perts = []
+    z_basals = []
+    for tensors in tqdm(scdl):
+        predictions = self.module.get_expression(tensors, n_samples=n_samples, covars_to_add=covars_to_add, latent=latent_key)
+        
+        px = predictions['px']
+        z = predictions['z']
+        z_corrected = predictions['z_corrected']
+        z_no_pert = predictions['z_no_pert']
+        z_no_pert_corrected = predictions['z_no_pert_corrected']
+        z_basal = predictions['z_basal']
+
+        
+        x_pred = (
+            px.detach().cpu().numpy()
+        )
+        xs.append(x_pred)
+        
+        z = (
+            z.detach().cpu().numpy()
+        )
+        zs.append(z)
+        
+        z_corrected = (
+            z_corrected.detach().cpu().numpy()
+        )
+        z_correcteds.append(z_corrected)
+        
+        z_no_pert = (          
+            z_no_pert.detach().cpu().numpy()
+        )   
+        z_no_perts.append(z_no_pert)
+        
+        z_basal = (
+            z_basal.detach().cpu().numpy()
+        )   
+        z_basals.append(z_basal)
+        
+
+    if n_samples > 1 and self.module.variational:
+        # The -2 axis correspond to cells.
+        x_pred = np.concatenate(xs, axis=1)
+        z = np.concatenate(zs, axis=1)
+        z_corrected = np.concatenate(z_correcteds, axis=1)
+        z_no_pert = np.concatenate(z_no_perts, axis=1)
+        z_basal = np.concatenate(z_basals, axis=1)
+    else:
+        x_pred = np.concatenate(xs, axis=0)
+        z = np.concatenate(zs, axis=0)
+        z_corrected = np.concatenate(z_correcteds, axis=0)
+        z_no_pert = np.concatenate(z_no_perts, axis=0)
+        z_basal = np.concatenate(z_basals, axis=0)
+
+    if self.module.variational and n_samples > 1 and return_mean:
+        x_pred = x_pred.mean(0)
+        z = z.mean(0)
+        z_corrected = z_corrected.mean(0)
+        z_no_pert = z_no_pert.mean(0)
+        z_basal = z_basal.mean(0)
+
+
+    latent_x_pred = AnnData(
+        X=np.concatenate(x_pred, axis=0), obs=adata.obs.copy()
+    )
+    latent_x_red.obs_names = adata.obs_names
+
+    latent_z = AnnData(
+        X=np.concatenate(z, axis=0), obs=adata.obs.copy()   
+    )
+    latent_z.obs_names = adata.obs_names
+    
+    latent_z_corrected = AnnData(
+        X=np.concatenate(z_corrected, axis=0), obs=adata.obs.copy()
+    )
+    latent_z_corrected.obs_names = adata.obs_names
+    
+    latent_z_no_pert = AnnData(
+        X=np.concatenate(z_no_pert, axis=0), obs=adata.obs.copy()
+    )
+    latent_z_no_pert.obs_names = adata.obs_names
+    
+    latent_z_basal = AnnData(
+        X=np.concatenate(z_basal, axis=0), obs=adata.obs.copy()
+    )
+    latent_z_basal.obs_names = adata.obs_names
+    
+    latent_outputs = {
+        "latent_x_pred": latent_x_pred,
+        "latent_z": latent_z,
+        "latent_z_corrected": latent_z_corrected,
+        "latent_z_no_pert": latent_z_no_pert,
+        "latent_z_basal": latent_z_basal,
+    }
+    
+    return latent_outputs
+    
+    
     @torch.no_grad()
     def get_pert_embeddings(self, dosage=1.0, pert: Optional[str] = None):
         """Computes all/specific perturbation (e.g. drug) embeddings

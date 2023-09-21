@@ -252,6 +252,7 @@ class CPAModule(BaseModuleClass):
             covars_dict,
             mixup_lambda: float = 1.0,
             n_samples: int = 1,
+            covars_to_add: Optional[list] = None,
     ):
         batch_size = x.shape[0]
 
@@ -288,23 +289,32 @@ class CPAModule(BaseModuleClass):
         z_covs_wo_batch = torch.zeros_like(z_basal)  # ([n_samples,] batch_size, n_latent)
 
         batch_key = CPA_REGISTRY_KEYS.BATCH_KEY
-        for covar, encoder in self.covars_encoder.items():
-            z_cov = self.covars_embeddings[covar](covars_dict[covar].long())
-            if len(encoder) > 1:
-                z_cov_mixup = self.covars_embeddings[covar](covars_dict[covar + '_mixup'].long())
-                z_cov = mixup_lambda * z_cov + (1. - mixup_lambda) * z_cov_mixup
-            z_cov = z_cov.view(batch_size, self.n_latent)  # batch_size, n_latent
-            z_covs += z_cov
+        
+        if covars_to_add is None:
+            covars_to_add = list(self.covars_encoder.keys())
             
-            if covar != batch_key:
-                z_covs_wo_batch += z_cov
+        for covar, encoder in self.covars_encoder.items():
+            if covar in covars_to_add:
+                z_cov = self.covars_embeddings[covar](covars_dict[covar].long())
+                if len(encoder) > 1:
+                    z_cov_mixup = self.covars_embeddings[covar](covars_dict[covar + '_mixup'].long())
+                    z_cov = mixup_lambda * z_cov + (1. - mixup_lambda) * z_cov_mixup
+                z_cov = z_cov.view(batch_size, self.n_latent)  # batch_size, n_latent
+                z_covs += z_cov
+                
+                if covar != batch_key:
+                    z_covs_wo_batch += z_cov
 
         z = z_basal + z_pert + z_covs
         z_corrected = z_basal + z_pert + z_covs_wo_batch
+        z_no_pert = z_basal + z_covs
+        z_no_pert_corrected = z_basal + z_covs_wo_batch
 
         return dict(
             z=z,
             z_corrected=z_corrected,
+            z_no_pert=z_no_pert,
+            z_no_pert_corrected=z_no_pert_corrected,
             z_basal=z_basal,
             z_covs=z_covs,
             z_pert=z_pert.sum(dim=1),
@@ -314,7 +324,13 @@ class CPAModule(BaseModuleClass):
         )
 
     def _get_generative_input(self, tensors, inference_outputs, **kwargs):
-        z = inference_outputs["z"]
+        if 'latent' in kwargs.keys():
+            if kwargs['latent'] in inference_outputs.keys(): # z, z_corrected, z_no_pert, z_no_pert_corrected, z_basal
+                z = inference_outputs[kwargs['latent']]
+            else:
+                raise Exception('Invalid latent space')
+        else:
+            z = inference_outputs["z"]
         library = inference_outputs['library']
 
         return dict(
@@ -448,7 +464,7 @@ class CPAModule(BaseModuleClass):
 
         return knn_basal, knn_after
 
-    def get_expression(self, tensors, n_samples=1):
+    def get_expression(self, tensors, n_samples=1, covars_to_add=None, latent='z'):
         """Computes gene expression means and std.
 
         Only implemented for the gaussian likelihood.
@@ -461,11 +477,18 @@ class CPAModule(BaseModuleClass):
         """
         tensors, _ = self.mixup_data(tensors, alpha=0.0)
 
-        _, generative_outputs = self.forward(
+        inference_outputs, generative_outputs = self.forward(
             tensors,
-            inference_kwargs={'n_samples': n_samples},
+            inference_kwargs={'n_samples': n_samples, 'covars_to_add': covars_to_add},
+            get_generative_input_kwargs={'latent': latent},
             compute_loss=False,
         )
+
+        z = inference_outputs['z']
+        z_corrected = inference_outputs['z_corrected']
+        z_no_pert = inference_outputs['z_no_pert']
+        z_no_pert_corrected = inference_outputs['z_no_pert_corrected']
+        z_basal = inference_outputs['z_basal']
 
         px = generative_outputs['px']
 
@@ -474,9 +497,16 @@ class CPAModule(BaseModuleClass):
         else:
             output_key = 'mu'
 
-        output = getattr(px, output_key)
+        reconstruction = getattr(px, output_key)
 
-        return output
+        return dict(
+            px=reconstruction,
+            z=z,
+            z_corrected=z_corrected,
+            z_no_pert=z_no_pert,
+            z_no_pert_corrected=z_no_pert_corrected,
+            z_basal=z_basal,
+        )
 
     def get_pert_embeddings(self, tensors, **inference_kwargs):
         inputs = self._get_inference_input(tensors)
