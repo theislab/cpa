@@ -703,7 +703,6 @@ class CPA(BaseModelClass):
 
     def custom_predict(
         self,
-        # output: str = "reconstruction",
         covars_to_add: Optional[Sequence[str]] = None,
         basal=False,
         add_batch: bool = True,
@@ -718,8 +717,7 @@ class CPA(BaseModelClass):
         Predicts the output of the model on the given input data.
 
         Args:
-            output (str): The type of output to return. Can be "reconstruction" or "latent".
-            covars_to_add (Optional[Sequence[str]]): Covariates to add to the basal latent representation.
+            covars_to_add (Optional[Sequence[str]]): List of covariates to add to the basal latent representation.
             basal (bool): Whether to use just the basal latent representation. If True, `add_batch` and `add_pert` are ignored.
             add_batch (bool): Whether to add the batch covariate to the latent representation.
             add_pert (bool): Whether to add the perturbation covariate to the latent representation.
@@ -730,22 +728,14 @@ class CPA(BaseModelClass):
             return_mean (bool): Whether to return the mean of the samples or all the samples.
 
         Returns:
-            Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]: The predicted output of the model.
-            If `output` is "reconstruction", returns the reconstructed data.
-            If `output` is "latent", returns the latent representation of the data.
-            If `return_mean` is True, returns only the mean of the samples.
-            If `return_mean` is False, returns all the samples.
+            latent_outputs (AnnData): A dictionary of AnnData objects containing the predicted gene expression for the specified 
+            covariates, and latent representations for different covariate combinations.
         """
-        # assert output in ["reconstruction", "latent"]
         if covars_to_add is None:
             covars_to_add = []
         for covar in covars_to_add:
-            assert covar in self.module.covars_encoder.keys(), f"covariate {covar} not found in learned covariates"
-        
-            # get_inference_input_kwargs: dict | None = None,
-            # get_generative_input_kwargs: dict | None = None,
-            # inference_kwargs: dict | None = None,
-            # generative_kwargs: dict | None = None,
+            assert covar in self.module.covars_encoder.keys(
+            ), f"covariate {covar} not found in learned covariates"
 
         if basal:
             latent_key = "z_basal"
@@ -758,7 +748,7 @@ class CPA(BaseModelClass):
                 latent_key = "z_corrected"
             else:
                 latent_key = "z_no_pert_corrected"
-            
+
         assert self.module.recon_loss in ["gauss", "nb", "zinb"]
         self.module.eval()
 
@@ -775,8 +765,9 @@ class CPA(BaseModelClass):
         z_no_pert_correcteds = []
         z_basals = []
         for tensors in tqdm(scdl):
-            predictions = self.module.get_expression(tensors, n_samples=n_samples, covars_to_add=covars_to_add, latent=latent_key)
-            
+            predictions = self.module.get_expression(
+                tensors, n_samples=n_samples, covars_to_add=covars_to_add, latent=latent_key)
+
             px = predictions['px']
             z = predictions['z']
             z_corrected = predictions['z_corrected']
@@ -784,37 +775,35 @@ class CPA(BaseModelClass):
             z_no_pert_corrected = predictions['z_no_pert_corrected']
             z_basal = predictions['z_basal']
 
-            
             x_pred = (
                 px.detach().cpu().numpy()
             )
             xs.append(x_pred)
-            
+
             z = (
                 z.detach().cpu().numpy()
             )
             zs.append(z)
-            
+
             z_corrected = (
                 z_corrected.detach().cpu().numpy()
             )
             z_correcteds.append(z_corrected)
-            
-            z_no_pert = (          
+
+            z_no_pert = (
                 z_no_pert.detach().cpu().numpy()
-            )   
+            )
             z_no_perts.append(z_no_pert)
-            
+
             z_no_pert_corrected = (
                 z_no_pert_corrected.detach().cpu().numpy()
             )
             z_no_pert_correcteds.append(z_no_pert_corrected)
-            
+
             z_basal = (
                 z_basal.detach().cpu().numpy()
-            )   
+            )
             z_basals.append(z_basal)
-            
 
         if n_samples > 1 and self.module.variational:
             # The -2 axis correspond to cells.
@@ -846,30 +835,30 @@ class CPA(BaseModelClass):
         latent_x_pred.obs_names = adata.obs_names
 
         latent_z = AnnData(
-            X=z, obs=adata.obs.copy()   
+            X=z, obs=adata.obs.copy()
         )
         latent_z.obs_names = adata.obs_names
-        
+
         latent_z_corrected = AnnData(
             X=z_corrected, obs=adata.obs.copy()
         )
         latent_z_corrected.obs_names = adata.obs_names
-        
+
         latent_z_no_pert = AnnData(
             X=z_no_pert, obs=adata.obs.copy()
         )
         latent_z_no_pert.obs_names = adata.obs_names
-       
+
         latent_z_no_pert_corrected = AnnData(
             X=z_no_pert_corrected, obs=adata.obs.copy()
         )
         latent_z_no_pert_corrected.obs_names = adata.obs_names
-        
+
         latent_z_basal = AnnData(
             X=z_basal, obs=adata.obs.copy()
         )
         latent_z_basal.obs_names = adata.obs_names
-        
+
         latent_outputs = {
             "latent_x_pred": latent_x_pred,
             "latent_z": latent_z,
@@ -878,10 +867,9 @@ class CPA(BaseModelClass):
             "latent_z_no_pert_corrected": latent_z_no_pert_corrected,
             "latent_z_basal": latent_z_basal,
         }
-        
+
         return latent_outputs
-    
-    
+
     @torch.no_grad()
     def get_pert_embeddings(self, dosage=1.0, pert: Optional[str] = None):
         """Computes all/specific perturbation (e.g. drug) embeddings
@@ -892,7 +880,7 @@ class CPA(BaseModelClass):
             Dosage of interest, by default 1.0
         pert: str, optional
             Perturbation name if single perturbation embedding is desired
-        
+
         Returns
         -------
         AnnData with perturbation embeddings in `.X` and perturbation names saved in `.obs['pert_name']`.
