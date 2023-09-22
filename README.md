@@ -17,13 +17,7 @@
 
 
 ### Installing CPA
-You can install CPA using pip:
-
-<pre>
-pip install git+https://github.com/theislab/cpa
-<del>pip install cpa-tools</del>
-</pre>
-
+You can install CPA using pip and also directly from the github to access latest development version. 
 See detailed instructions [here](https://cpa-tools.readthedocs.io/en/latest/installation.html). 
 
 ## How to use CPA
