@@ -23,3 +23,10 @@ If you would like to perform context transfer (i.e. predict the effect of a pert
     :maxdepth: 1
 
     Kang
+
+If you would like to perform batch effect removal on gene expression space as well as latent space, check this example:  
+
+.. toctree::
+    :maxdepth: 1
+
+    Batch_correction_in_expression_space
