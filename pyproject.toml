@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cpa-tools"
-version = "0.8.3"
+version = "0.8.4"
 description = "Compositional Perturbation Autoencoder (CPA)"
 authors = ["Mohsen Naghipourfar <naghipourfar@berkeley.edu>"]
 license = "MIT"
