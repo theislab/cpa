@@ -374,10 +374,10 @@ class CPA(BaseModelClass):
                 if cov_cond in adata.uns[deg_uns_key].keys():
                     mask_hvg = adata.var_names.isin(
                         adata.uns[deg_uns_key][cov_cond]
-                    ).astype(np.int)
+                    ).astype(int)
                     mask_hvg_r2 = adata.var_names.isin(
                         adata.uns[deg_uns_key][cov_cond][:n_deg_r2]
-                    ).astype(np.int)
+                    ).astype(int)
                     cov_cond_map[cov_cond] = list(mask_hvg)
                     cov_cond_map_r2[cov_cond] = list(mask_hvg_r2)
                 else:
