@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cpa-tools"
-version = "0.8.3"
+version = "0.8.4"
 description = "Compositional Perturbation Autoencoder (CPA)"
 authors = ["Mohsen Naghipourfar <naghipourfar@berkeley.edu>"]
 license = "MIT"
@@ -24,6 +24,7 @@ numpy = '>=1.22.4,<1.24'
 seaborn = "*"
 gdown = "*"
 jax = "^0.4.16"
+torchaudio = ">2.0.0,<=2.0.1"
 
 # Optional dependencies
 pytest = "*"
