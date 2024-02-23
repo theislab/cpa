@@ -23,7 +23,8 @@ adjustText = "*"
 numpy = '>=1.22.4,<1.24'
 seaborn = "*"
 gdown = "*"
-jax = "^0.4.16"
+jax = ">=0.4.16, <0.4.24"
+jaxlib = ">=0.4.16, <0.4.24"
 torchaudio = ">2.0.0,<=2.0.1"
 
 # Optional dependencies
