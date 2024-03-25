@@ -28,3 +28,11 @@ ComPertAPI
    :template: class_no_inherited.rst
 
    ComPertAPI
+
+
+run_autotune
+~~~~~~~~~~~~
+.. autosummary::
+   :toctree: reference/
+
+   run_autotune
