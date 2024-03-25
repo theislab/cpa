@@ -64,7 +64,6 @@ extensions = [
     "sphinx.ext.autosummary",
     "scanpydoc.elegant_typehints",
     "scanpydoc.definition_list_typed_field",
-    "scanpydoc.autosummary_generate_imported",
     *[p.stem for p in (HERE / "extensions").glob("*.py")],
 ]
 
@@ -82,6 +81,7 @@ source_suffix = ['.rst', '.md']
 # source_suffix = ".rst"
 
 # Generate the API documentation when building
+autosummary_imported_members = True
 autosummary_generate = True
 autodoc_member_order = "bysource"
 napoleon_google_docstring = True  # for pytorch lightning
