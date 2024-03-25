@@ -131,6 +131,7 @@ class AutotuneExperiment:
         setup_anndata_kwargs: dict[str, Any] = {},
         use_wandb: bool = False,
         wandb_name: str = "cpa_tune",
+        plan_kwargs_keys: list[str] = [],
     ) -> None:
         self.model_cls = model_cls
         self.data = data
@@ -151,6 +152,7 @@ class AutotuneExperiment:
         self.setup_anndata_kwargs = setup_anndata_kwargs
         self.use_wandb = use_wandb
         self.wandb_name = wandb_name
+        self.plan_kwargs_keys = plan_kwargs_keys
 
     @property
     def id(self) -> str:
@@ -496,6 +498,7 @@ class AutotuneExperiment:
                                     adata_path=self.adata_path,
                                     sub_sample=self.sub_sample,
                                     setup_anndata_kwargs=self.setup_anndata_kwargs,
+                                    plan_kwargs_keys=self.plan_kwargs_keys,
                                     )
         trainable = with_resources(trainable, resources=self.resources)
 
@@ -530,7 +533,8 @@ def _trainable(
     experiment: AutotuneExperiment,
     adata_path: str | None = None,
     sub_sample: float | None = None,
-    setup_anndata_kwargs: dict[str, Any] = {}
+    setup_anndata_kwargs: dict[str, Any] = {},
+    plan_kwargs_keys: list[str] = [],
 ) -> None:
     """Implements a Ray Tune trainable function for an :class:`~scvi.autotune.AutotuneExperiment`.
 
@@ -560,8 +564,7 @@ def _trainable(
     model_args, train_args = param_sample.get(
         "model_args", {}), param_sample.get("train_args", {})
     plan_kwargs = {}
-    train_keys = list(train_args.keys())
-    for key in train_keys:
+    for key in plan_kwargs_keys:
         plan_kwargs[key] = train_args.pop(key)
     train_args = {
         "enable_progress_bar": True,
@@ -579,11 +582,7 @@ def _trainable(
         experiment.model_cls.setup_anndata(adata, **setup_anndata_kwargs)
 
         model = experiment.model_cls(adata, **model_args)
-        model.train(max_epochs=2000,
-                    use_gpu=True,
-                    early_stopping_patience=10,
-                    check_val_every_n_epoch=5,
-                    plan_kwargs=plan_kwargs,
+        model.train(plan_kwargs=plan_kwargs,
                     **train_args)
         del adata
         import gc
@@ -627,6 +626,7 @@ def run_autotune(
     setup_anndata_kwargs: dict[str, Any] = {},
     use_wandb: bool = False,
     wandb_name: str = "cpa_tune",
+    plan_kwargs_keys: list[str] = [],
 ) -> AutotuneExperiment:
     """``BETA`` Run a hyperparameter sweep.
 
@@ -727,6 +727,7 @@ def run_autotune(
         setup_anndata_kwargs=setup_anndata_kwargs,
         use_wandb=use_wandb,
         wandb_name=wandb_name,
+        plan_kwargs_keys=plan_kwargs_keys,
     )
     logger.info(f"Running autotune experiment {experiment.name}.")
     init(log_to_driver=True, ignore_reinit_error=True)
