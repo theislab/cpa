@@ -1,0 +1,6 @@
+New in 0.8.6 (2024-03-25)
+-------------------------
+
+- Added a tuner for hyperparameter optimization of CPA (`from cpa import run_autotune`)
+- Tuner adopted and adjusted from scvi-tools v1.2.0 (experimental at the time of writing)
+- Added tuning example script (`examples/tune_script.py`)
