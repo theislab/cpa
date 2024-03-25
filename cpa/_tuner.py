@@ -573,6 +573,7 @@ def _trainable(
     settings.seed = experiment.seed
     if adata_path is not None:
         adata = sc.read_h5ad(adata_path)
+        adata.X = adata.layers['counts'].copy()
         if sub_sample is not None:
             sc.pp.subsample(adata, fraction=sub_sample)
         experiment.model_cls.setup_anndata(adata, **setup_anndata_kwargs)
