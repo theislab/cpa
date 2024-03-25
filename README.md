@@ -96,6 +96,10 @@ Pre-processing steps
 Congrats! Now you're dataset is ready to be used with CPA. Don't forget to save your pre-processed dataset using `adata.write_h5ad` function.
 
 
+Hyper parameter optimization
+--------------------
+We provide an example script to use the built-in hyperparameter optimization function in CPA (based on scvi-tools hyperparam optimizer). You can find the script at `examples/tune_script.py`.
+
 Support and contribute
 -------------------------------
 If you have a question or new architecture or a model that could be integrated into our pipeline, you can
