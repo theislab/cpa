@@ -45,7 +45,7 @@ import pickle
 with open('result_grid.pkl', 'rb') as f:
     result_grid = pickle.load(f)
 ```
-From here, you can follow the instructions in the [Ray Documentations](https://docs.ray.io/en/latest/tune/examples/tune_analyze_results.html#experiment-level-analysis-working-with-resultgrid) to analyse the run, and choose the best hyperparameters for your data.
+From here, you can follow the instructions in the [Ray Documentations](https://docs.ray.io/en/latest/tune/examples/tune_analyze_results.html#experiment-level-analysis-working-with-resultgrid) to analyze the run, and choose the best hyperparameters for your data.
 
 You can also use the integration with wandb to log the hyperparameter optimization results. You can find the script at `examples/tune_script_wandb.py`. --> `use_wandb=True`
 
