@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cpa-tools"
-version = "0.8.5"
+version = "0.8.6"
 description = "Compositional Perturbation Autoencoder (CPA)"
 authors = ["Mohsen Naghipourfar <naghipourfar@berkeley.edu>"]
 license = "MIT"
@@ -26,6 +26,8 @@ gdown = "*"
 jax = ">=0.4.16, <0.4.24"
 jaxlib = ">=0.4.16, <0.4.24"
 torchaudio = ">2.0.0,<=2.0.1"
+lightning = ">=2.2.0, <2.3.0"
+ray = { version = ">=2.9.0, <2.10.0", extras = ["data", "train", "tune", "serve"] }
 
 # Optional dependencies
 pytest = "*"
