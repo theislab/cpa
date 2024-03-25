@@ -128,7 +128,9 @@ class AutotuneExperiment:
         searcher_kwargs: dict | None = None,
         adata_path: str | None = None,
         sub_sample: float | None = None,
-        setup_anndata_kwargs: dict[str, Any] = {}
+        setup_anndata_kwargs: dict[str, Any] = {},
+        use_wandb: bool = False,
+        wandb_name: str = "cpa_tune",
     ) -> None:
         self.model_cls = model_cls
         self.data = data
@@ -147,6 +149,8 @@ class AutotuneExperiment:
         self.adata_path = adata_path
         self.sub_sample = sub_sample
         self.setup_anndata_kwargs = setup_anndata_kwargs
+        self.use_wandb = use_wandb
+        self.wandb_name = wandb_name
 
     @property
     def id(self) -> str:
@@ -506,7 +510,7 @@ class AutotuneExperiment:
             local_dir=self.logging_dir,
             log_to_file=True,
             verbose=1,
-            callbacks=[WandbLoggerCallback(project="cpa_tune")]
+            callbacks=[WandbLoggerCallback(project=self.wandb_name)] if self.use_wandb else None,
 
         )
         return Tuner(
@@ -619,7 +623,9 @@ def run_autotune(
     searcher_kwargs: dict | None = None,
     adata_path: str | None = None,
     sub_sample: float | None = None,
-    setup_anndata_kwargs: dict[str, Any] = {}
+    setup_anndata_kwargs: dict[str, Any] = {},
+    use_wandb: bool = False,
+    wandb_name: str = "cpa_tune",
 ) -> AutotuneExperiment:
     """``BETA`` Run a hyperparameter sweep.
 
@@ -718,6 +724,8 @@ def run_autotune(
         adata_path=adata_path,
         sub_sample=sub_sample,
         setup_anndata_kwargs=setup_anndata_kwargs,
+        use_wandb=use_wandb,
+        wandb_name=wandb_name,
     )
     logger.info(f"Running autotune experiment {experiment.name}.")
     init(log_to_driver=False, ignore_reinit_error=True)
