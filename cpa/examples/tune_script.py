@@ -5,8 +5,9 @@ import scanpy as sc
 from ray import tune
 import numpy as np
 
+import pickle
 
-DATA_PATH = '/PATH/TO/DATA.h5ad' # Change this to your desired path
+DATA_PATH = '/PATH/TO/DATA.h5ad'  # Change this to your desired path
 adata = sc.read_h5ad(DATA_PATH)
 adata.X = adata.layers['counts'].copy()  # Counts should be available in the 'counts' layer
 sc.pp.subsample(adata, fraction=0.1)
@@ -44,6 +45,7 @@ model_args = {
 }
 
 train_args = {
+    ##################### plan_kwargs #####################
     'n_epochs_adv_warmup': tune.choice([0, 1, 3, 5, 10, 50, 70]),
     'n_epochs_kl_warmup': tune.choice([None]),
         # lambda spec: None if not spec.config.model_args.variational else np.random.choice([0, 1, 3, 5, 10])),
@@ -87,11 +89,33 @@ train_args = {
 
     'step_size_lr': tune.choice([10, 25, 45]),
 }
+plan_kwargs_keys = list(train_args.keys())
 
+trainer_actual_args = {
+    'max_epochs': 200,
+    'use_gpu': True,
+    'early_stopping_patience': 10,
+    'check_val_every_n_epoch': 5,
+}
+train_args.update(trainer_actual_args)
+                        
 search_space = {
     'model_args': model_args,
     'train_args': train_args,
 }
+
+scheduler_kwargs = {
+    # 'mode': 'max',
+    # 'metric': 'cpa_metric',
+    'max_t': 1000,
+    'grace_period': 5,
+    'reduction_factor': 4,
+}
+
+# searcher_kwargs = {
+#     'mode': 'max',
+#     'metric': 'cpa_metric',
+# }
 
 setup_anndata_kwargs = {
             'perturbation_key': 'condition_ID',
@@ -107,25 +131,24 @@ setup_anndata_kwargs = {
 model = cpa.CPA
 model.setup_anndata(adata, **setup_anndata_kwargs)
 
-run_autotune(
+experiment = run_autotune(
     model_cls=model,
     data=adata,
     metrics=["cpa_metric",  # The first one (cpa_metric) is the one that will be used for optimization "MAIN ONE"
              "disnt_basal",
              "disnt_after",
              "r2_mean",
-             "r2_var",
-             "r2_mean_lfc",
-             "r2_var_lfc",
-             "recon_loss",
-             "KL"],
+             "val_r2_mean",
+             "val_r2_var",
+             "val_recon",
+            ],
     mode="max",
     search_space=search_space,
     num_samples=5000,  # Change this to your desired number of samples (Number of runs)
     scheduler="asha",
     searcher="hyperopt",
     seed=1,
-    resources={"cpu": 40, "gpu":0.2, "memory": 16000},
+    resources={"cpu": 40, "gpu": 0.2, "memory": 16000},
     experiment_name="cpa_autotune",  # Change this to your desired experiment name
     logging_dir='/PATH/TO/LOGS/',  # Change this to your desired path
     adata_path=DATA_PATH,
@@ -133,6 +156,10 @@ run_autotune(
     setup_anndata_kwargs=setup_anndata_kwargs,
     use_wandb=True,  # If you want to use wandb, set this to True
     wandb_name="cpa_tune",  # Change this to your desired wandb project name
-    # scheduler_kwargs: dict | None = None,
-    # searcher_kwargs: dict | None = None,
+    scheduler_kwargs=scheduler_kwargs,
+    plan_kwargs_keys=plan_kwargs_keys,
+    # searcher_kwargs=searcher_kwargs,
 )
+result_grid = experiment.result_grid
+with open('result_grid.pkl', 'wb') as f:
+    pickle.dump(result_grid, f)
