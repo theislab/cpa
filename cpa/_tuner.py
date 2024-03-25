@@ -510,7 +510,7 @@ class AutotuneExperiment:
         run_config = RunConfig(
             name=self.name,
             storage_path=self.logging_dir,
-            local_dir=self.logging_dir,
+            # local_dir=self.logging_dir,  # depricated
             log_to_file=True,
             verbose=1,
             callbacks=[WandbLoggerCallback(project=self.wandb_name)] if self.use_wandb else None,
