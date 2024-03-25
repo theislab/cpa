@@ -38,17 +38,17 @@ model_args = {
 
     'seed': tune.randint(0, 10000),
     
-    'split_key': tune.choice(['split_1ct_MEC']),
-    'train_split': tune.choice(['train']),
-    'valid_split': tune.choice(['valid']),
-    'test_split': tune.choice(['ood']),
+    'split_key': 'split_1ct_MEC',
+    'train_split': 'train',
+    'valid_split': 'valid',
+    'test_split': 'ood',
 }
 
 train_args = {
     ##################### plan_kwargs #####################
     'n_epochs_adv_warmup': tune.choice([0, 1, 3, 5, 10, 50, 70]),
     'n_epochs_kl_warmup': tune.choice([None]),
-        # lambda spec: None if not spec.config.model_args.variational else np.random.choice([0, 1, 3, 5, 10])),
+        # lambda spec: None if not spec.config.model_args.variational else np.random.choice([0, 1, 3, 5, 10])), # Use this if you're using variational=True as well
 
     'n_epochs_pretrain_ae': tune.choice([0, 1, 3, 5, 10, 30, 50]),
 
@@ -98,7 +98,7 @@ trainer_actual_args = {
     'check_val_every_n_epoch': 5,
 }
 train_args.update(trainer_actual_args)
-                        
+                
 search_space = {
     'model_args': model_args,
     'train_args': train_args,
@@ -140,15 +140,14 @@ experiment = run_autotune(
              "r2_mean",
              "val_r2_mean",
              "val_r2_var",
-             "val_recon",
-            ],
+             "val_recon",],
     mode="max",
     search_space=search_space,
     num_samples=5000,  # Change this to your desired number of samples (Number of runs)
     scheduler="asha",
     searcher="hyperopt",
     seed=1,
-    resources={"cpu": 40, "gpu": 0.2, "memory": 16000},
+    resources={"cpu": 40, "gpu": 0.2, "memory": 16000},  # Change this to your desired resources
     experiment_name="cpa_autotune",  # Change this to your desired experiment name
     logging_dir='/PATH/TO/LOGS/',  # Change this to your desired path
     adata_path=DATA_PATH,
