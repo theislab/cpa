@@ -51,7 +51,7 @@ You can also use the integration with wandb to log the hyperparameter optimizati
 
 Everything is based on [Ray Tune](https://ray.io/). You can find more information about the hyperparameter optimization in the [Ray Tune Documentations](https://docs.ray.io/en/latest/tune/index.html).
 
-The tuner is adopted and adjusted from scvi-tools v1.2.0 (unreleased) [release notes](https://docs.scvi-tools.org/en/stable/release_notes/index.html)
+The tuner is adapted and adjusted from scvi-tools v1.2.0 (unreleased) [release notes](https://docs.scvi-tools.org/en/stable/release_notes/index.html)
 
 
 Datasets and Pre-trained models
