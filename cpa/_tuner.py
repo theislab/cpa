@@ -729,6 +729,6 @@ def run_autotune(
         wandb_name=wandb_name,
     )
     logger.info(f"Running autotune experiment {experiment.name}.")
-    init(log_to_driver=False, ignore_reinit_error=True)
+    init(log_to_driver=True, ignore_reinit_error=True)
     experiment.result_grid = experiment.get_tuner().fit()
     return experiment
