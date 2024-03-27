@@ -564,13 +564,18 @@ def _trainable(
     model_args, train_args = param_sample.get(
         "model_args", {}), param_sample.get("train_args", {})
     plan_kwargs = {}
-    for key in plan_kwargs_keys:
-        plan_kwargs[key] = train_args.pop(key)
+    actual_train_args = {}
+    for key in train_args.keys():
+        if key in plan_kwargs_keys:
+            plan_kwargs[key] = train_args[key]
+        else:
+            actual_train_args[key] = train_args[key]
+
     train_args = {
         "enable_progress_bar": True,
         "logger": experiment.get_logger(get_context().get_trial_name()),
         "callbacks": [experiment.metrics_callback],
-        **train_args,
+        **actual_train_args,
     }
 
     settings.seed = experiment.seed
