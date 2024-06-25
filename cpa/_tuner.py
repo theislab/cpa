@@ -131,6 +131,7 @@ class AutotuneExperiment:
         setup_anndata_kwargs: dict[str, Any] = {},
         use_wandb: bool = False,
         wandb_name: str = "cpa_tune",
+        wandb_api_key: str | None = None,
         plan_kwargs_keys: list[str] = [],
     ) -> None:
         self.model_cls = model_cls
@@ -153,6 +154,7 @@ class AutotuneExperiment:
         self.use_wandb = use_wandb
         self.wandb_name = wandb_name
         self.plan_kwargs_keys = plan_kwargs_keys
+        self.wandb_api_key = wandb_api_key
 
     @property
     def id(self) -> str:
@@ -513,7 +515,7 @@ class AutotuneExperiment:
             local_dir=self.logging_dir,
             log_to_file=True,
             verbose=1,
-            callbacks=[WandbLoggerCallback(project=self.wandb_name)] if self.use_wandb else None,
+            callbacks=[WandbLoggerCallback(project=self.wandb_name, api_key=self.wandb_api_key)] if self.use_wandb else None,
 
         )
         return Tuner(
@@ -593,17 +595,17 @@ def _trainable(
         import gc
         gc.collect()
     elif isinstance(experiment.data, (AnnData, MuData)):
-        getattr(experiment.model_cls, experiment.setup_method_name)(
-            experiment.data,
-            **experiment.setup_method_args,
-        )
-        experiment.model_cls.setup_anndata(adata, **setup_anndata_kwargs)
+        # getattr(experiment.model_cls, experiment.setup_method_name)(
+        #     experiment.data,
+        #     # **experiment.setup_method_args,
+        # )
+        experiment.model_cls.setup_anndata(experiment.data, **setup_anndata_kwargs)
 
-        model = experiment.model_cls(adata, **model_args)
-        model.train(max_epochs=2000,
-                    use_gpu=True,
-                    early_stopping_patience=10,
-                    check_val_every_n_epoch=5,
+        model = experiment.model_cls(experiment.data, **model_args)
+        model.train(max_epochs=train_args.pop("max_epochs",2000),
+                    use_gpu=train_args.pop("use_gpu",True),
+                    early_stopping_patience=train_args.pop("early_stopping_patience",10),
+                    check_val_every_n_epoch=train_args.pop("check_val_every_n_epoch",5),
                     plan_kwargs=plan_kwargs,
                     **train_args)
     else:  # NOT TESTED
@@ -631,6 +633,7 @@ def run_autotune(
     setup_anndata_kwargs: dict[str, Any] = {},
     use_wandb: bool = False,
     wandb_name: str = "cpa_tune",
+    wandb_api_key: str | None = None,
     plan_kwargs_keys: list[str] = [],
 ) -> AutotuneExperiment:
     """``BETA`` Run a hyperparameter sweep.
@@ -732,6 +735,7 @@ def run_autotune(
         setup_anndata_kwargs=setup_anndata_kwargs,
         use_wandb=use_wandb,
         wandb_name=wandb_name,
+        wandb_api_key=wandb_api_key,
         plan_kwargs_keys=plan_kwargs_keys,
     )
     logger.info(f"Running autotune experiment {experiment.name}.")
