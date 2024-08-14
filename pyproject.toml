@@ -52,7 +52,7 @@ sphinx-rtd-theme = "*"
 
 
 [tool.poetry.extras]
-docs = ["scanpy", "sphinx", "scipy", "scanpydoc", "nbsphinx", "nbsphinx-link", "ipython", "toml", "pydata-sphinx-theme", "typing_extensions", "sphinx-autodoc-typehints", "sphinx_gallery", "sphinx-rtd-theme"]
+docs = ["scanpy", "sphinx", "scanpydoc", "nbsphinx", "nbsphinx-link", "ipython", "toml", "pydata-sphinx-theme", "typing_extensions", "sphinx-autodoc-typehints", "sphinx_gallery", "sphinx-rtd-theme"]
 
 [build-system]
 requires = ["poetry-core"]
